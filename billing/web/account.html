@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Kabala – המנוי שלי</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wrap narrow">
+  <header class="top">
+    <span class="brand"><span class="logo" aria-hidden="true">🧾</span>Kabala</span>
+  </header>
+  <h1>המנוי שלי</h1>
+  <div id="loading" class="spinner" aria-label="טוען"></div>
+  <div id="error" class="hidden" role="alert"></div>
+  <div id="notice" class="hidden" role="status"></div>
+
+  <section id="content" class="hidden">
+    <div class="card">
+      <div class="summary"><span>תוכנית</span><span id="tier"></span></div>
+      <div class="summary"><span id="date-label">חיוב הבא</span><span id="date"></span></div>
+      <div class="summary"><span>מחיר</span><span class="amount" id="price"></span></div>
+      <div class="row">
+        <a class="btn btn-primary hidden" id="upgrade" href="#">שדרג ל-Pro</a>
+        <button class="btn btn-secondary hidden" id="cancel" type="button">ביטול מנוי</button>
+      </div>
+    </div>
+
+    <h2 style="margin-top:36px">הקבלות שלי</h2>
+    <div class="card" style="padding:8px 16px">
+      <table>
+        <thead><tr><th>תאריך</th><th>מסמך</th><th>סכום</th><th>סטטוס</th><th></th></tr></thead>
+        <tbody id="receipts"></tbody>
+      </table>
+      <p id="no-receipts" class="muted small center hidden">עוד אין קבלות. אחרי כל תשלום תישלח קבלה אוטומטית למייל.</p>
+    </div>
+
+    <h2 style="margin-top:36px">משלוח קבלות</h2>
+    <form class="card" id="receipt-settings">
+      <div class="summary"><span>נשלחות אל</span><span id="receipt-email" dir="ltr"></span></div>
+      <label class="field">
+        <span>מייל נוסף לקבלות (למשל רואה החשבון)</span>
+        <input id="cc-email" type="email" dir="ltr" placeholder="accountant@example.com" autocomplete="email" maxlength="254">
+      </label>
+      <label class="field">
+        <span>שפת הקבלה</span>
+        <select id="receipt-locale"><option value="he">עברית</option><option value="en">English</option></select>
+      </label>
+      <div class="row"><button class="btn btn-secondary" id="save-settings" type="submit">שמור</button></div>
+    </form>
+
+    <h2 style="margin-top:36px">היסטוריית תשלומים</h2>
+    <div class="card" style="padding:8px 16px">
+      <table>
+        <thead><tr><th>תאריך</th><th>סכום</th><th>סטטוס</th></tr></thead>
+        <tbody id="payments"></tbody>
+      </table>
+      <p id="no-payments" class="muted small center hidden">עוד אין תשלומים.</p>
+    </div>
+    <p class="small muted">הקבלות שכבר סודרו במחשב נשארות שלך תמיד, גם אם המנוי מסתיים.</p>
+  </section>
+
+  <dialog id="confirm-cancel">
+    <h2 style="margin-top:0">לבטל את המנוי?</h2>
+    <p class="muted" id="cancel-text"></p>
+    <div class="row">
+      <button class="btn btn-secondary" id="keep" type="button" autofocus>השאר את המנוי</button>
+      <button class="btn btn-danger" id="do-cancel" type="button">כן, בטל</button>
+    </div>
+  </dialog>
+</main>
+<script type="module" src="/account.js"></script>
+</body>
+</html>

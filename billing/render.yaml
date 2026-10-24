@@ -1,0 +1,41 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick the repo. Creates the server, Postgres and the daily reconcile.
+# Secrets (sync: false) are entered once in the Render dashboard; they never live in the repo.
+databases:
+  - name: kabala-db
+    plan: free
+    databaseName: kabala
+
+services:
+  - type: web
+    name: kabala-billing
+    runtime: docker
+    rootDir: billing
+    plan: free
+    healthCheckPath: /api/pricing
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: PAYPAL_MODE, value: sandbox }
+      - { key: DATABASE_URL, fromDatabase: { name: kabala-db, property: connectionString } }
+      - { key: PUBLIC_URL, sync: false }
+      - { key: PAYPAL_SANDBOX_CLIENT_ID, sync: false }
+      - { key: PAYPAL_SANDBOX_CLIENT_SECRET, sync: false }
+      - { key: PAYPAL_SANDBOX_WEBHOOK_ID, sync: false }
+      - { key: LICENSE_PRIVATE_KEY, sync: false }
+      - { key: LICENSE_PUBLIC_KEY, sync: false }
+      - { key: GOOGLE_CLIENT_ID, sync: false }
+      - { key: APP_DEEP_LINK, value: "kabala://payment-success" }
+
+  - type: cron
+    name: kabala-reconcile
+    runtime: docker
+    rootDir: billing
+    schedule: "0 3 * * *"
+    dockerCommand: npx tsx src/scripts/reconcile.ts
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: PAYPAL_MODE, value: sandbox }
+      - { key: DATABASE_URL, fromDatabase: { name: kabala-db, property: connectionString } }
+      - { key: PAYPAL_SANDBOX_CLIENT_ID, sync: false }
+      - { key: PAYPAL_SANDBOX_CLIENT_SECRET, sync: false }
+      - { key: LICENSE_PRIVATE_KEY, sync: false }
+      - { key: LICENSE_PUBLIC_KEY, sync: false }

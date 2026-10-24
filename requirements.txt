@@ -1,0 +1,5 @@
+PySide6-Essentials>=6.8
+google-auth-oauthlib>=1.2   # Apache-2.0: OAuth 2.0 + PKCE for installed apps
+keyring>=25                 # MIT: refresh token in Windows Credential Manager / macOS Keychain
+requests>=2.31              # Apache-2.0
+PySide6-WebEngine>=6.8         # LGPL: in-app PayPal checkout window (QtWebEngine)

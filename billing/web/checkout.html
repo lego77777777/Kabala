@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Kabala Pro – תשלום</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wrap narrow">
+  <header class="top">
+    <span class="brand"><span class="logo" aria-hidden="true">🧾</span>Kabala Pro</span>
+    <span class="badge" id="mode-badge"></span>
+  </header>
+
+  <section id="pay" class="hidden">
+    <h1>שדרוג ל-Kabala Pro</h1>
+    <p class="lead">קבלות ללא הגבלה, סריקה ברקע וייצוא לרואה החשבון.</p>
+    <div class="toggle" role="group" aria-label="תקופת חיוב">
+      <button type="button" data-interval="monthly" aria-pressed="true">חודשי</button>
+      <button type="button" data-interval="yearly" aria-pressed="false">שנתי <span class="save" id="save-badge"></span></button>
+    </div>
+    <div class="card">
+      <div class="summary"><span>Kabala Pro <span class="muted" id="per"></span></span><span class="amount" id="amount"></span></div>
+      <div class="summary small muted"><span id="note"></span></div>
+      <div id="paypal-buttons" aria-label="תשלום ב-PayPal"></div>
+      <p class="small muted center">תשלום מאובטח ב-PayPal · חיוב חוזר אוטומטי · ביטול בכל עת מתוך האפליקציה</p>
+    </div>
+  </section>
+
+  <div id="loading" class="spinner" aria-label="טוען"></div>
+  <div id="error" class="hidden" role="alert"></div>
+
+  <section id="done" class="hidden center card" aria-live="polite">
+    <div class="logo" style="margin:0 auto 16px;width:56px;height:56px;border-radius:50%;background:var(--success)">✓</div>
+    <h1>ברוך הבא ל-Kabala Pro!</h1>
+    <p class="lead">התשלום אומת מול PayPal. האפליקציה כבר מתעדכנת.</p>
+    <a class="btn btn-primary" id="back" href="#">חזרה ל-Kabala</a>
+    <p class="small muted">חשבונית נשלחה למייל שלך.</p>
+  </section>
+</main>
+<script src="/vendor/paypal-js/paypal-js.min.js"></script>
+<script type="module" src="/checkout.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kabala – מדיניות פרטיות</title>
+<style>
+  :root { --bg:#fafaf9; --surface:#fff; --border:#e4e4e7; --fg:#18181b; --muted:#64646e; --accent:#4f46e5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d0d10; --surface:#16161b; --border:#2e2e38; --fg:#ececf1; --muted:#9c9caa; --accent:#7c75ff; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI","Heebo",system-ui,sans-serif; line-height:1.7; }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
+  h1 { margin:0 0 4px; } h2 { margin-top:32px; font-size:1.2rem; }
+  .muted { color:var(--muted); } a { color:var(--accent); }
+  .box { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px 20px; }
+  .en { direction:ltr; text-align:left; margin-top:56px; padding-top:24px; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="index.html">← Kabala</a></p>
+  <h1>מדיניות פרטיות</h1>
+  <p class="muted">עודכן לאחרונה: 22 באוקטובר 2026</p>
+
+  <p>Kabala היא אפליקציה למחשב שולחני שמוצאת קבלות וחשבוניות בתיבת ה-Gmail שלך ושומרת אותן כקבצי PDF במחשב שלך.
+    המסמך הזה מסביר בשפה פשוטה אילו נתונים האפליקציה ניגשת אליהם, מה היא עושה איתם ומה נשמר.</p>
+
+  <h2>מה אנחנו קוראים</h2>
+  <ul>
+    <li>הגישה ל-Gmail היא לקריאה בלבד. אפשר להתחבר באחת משתי דרכים:
+      <ul>
+        <li><strong>התחברות עם Google:</strong> ההרשאות היחידות הן <code>gmail.readonly</code> (קריאה בלבד), ו-<code>openid</code> + <code>email</code> כדי לזהות את החשבון.</li>
+        <li><strong>סיסמת אפליקציה:</strong> חיבור ל-<code>imap.gmail.com</code> עם סיסמת אפליקציה שיצרת בחשבון Google. התיבה נפתחת במצב קריאה בלבד.</li>
+      </ul>
+    </li>
+    <li>האפליקציה מחפשת מיילים שנראים כמו קבלה, חשבונית או אישור תשלום, וקוראת את הנושא, השולח, התאריך, הטקסט והנספחים (PDF) שלהם.</li>
+    <li>Kabala לעולם לא שולחת, מוחקת, מעבירה, מסמנת או משנה מיילים.</li>
+  </ul>
+
+  <h2>איפה הנתונים מעובדים ונשמרים</h2>
+  <ul>
+    <li>העיבוד מתבצע במחשב שלך. הקבלות נשמרות רק בתיקייה שבחרת במחשב.</li>
+    <li>במחשב נשמר אינדקס מקומי (SQLite) עם הפרטים שחולצו: שם החברה, תאריך, סכום ונתיב הקובץ. תוכן המיילים עצמו לא נשמר באינדקס.</li>
+    <li>מפתח הגישה לחשבון גוגל או סיסמת האפליקציה נשמרים מוצפנים בכספת של מערכת ההפעלה (Windows Credential Manager / macOS Keychain).</li>
+    <li>אין לנו שרת שמקבל או שומר את המיילים שלך.</li>
+  </ul>
+
+  <h2>מנוי ותשלום</h2>
+  <ul>
+    <li>אם תשדרג ל-Pro, שרת המנויים של Kabala שומר את כתובת המייל שלך (מאומתת דרך התחברות Google), את סוג המנוי ואת היסטוריית התשלומים והחשבוניות.</li>
+    <li>התשלום עצמו מתבצע ב-PayPal. פרטי כרטיס האשראי או חשבון ה-PayPal שלך לעולם לא מגיעים אלינו.</li>
+    <li>שרת המנויים לא מקבל שום מידע מתיבת המייל שלך ולא מפתח גישה ל-Gmail.</li>
+  </ul>
+
+  <h2>מה נשלח החוצה</h2>
+  <ul>
+    <li><strong>רק אם הפעלת זאת בהגדרות</strong>, נשלחים לשירות מודל השפה של Anthropic (Claude) הנושא, הדומיין של השולח, התאריך וקטע טקסט מתוך מיילים שנראים כמו קבלה, לצורך זיהוי הקבלה וחילוץ הסכום. לפני השליחה מוסתרים מספרי כרטיסי אשראי, כתובות מייל ומספרי תעודת זהות. קבצים מצורפים לעולם לא נשלחים.</li>
+    <li>אפשר לבחור במקום זאת מודל מקומי (Ollama) או זיהוי מקומי בלבד, ואז שום תוכן מייל לא יוצא מהמחשב.</li>
+    <li>לפי תנאי השירות של Anthropic, מידע שנשלח דרך ה-API שלה אינו משמש לאימון מודלים.</li>
+  </ul>
+
+  <h2>שימוש מוגבל בנתוני Google</h2>
+  <p class="box">השימוש של Kabala במידע שמתקבל מ-Google APIs והעברתו לכל אפליקציה אחרת יעמדו ב-
+    <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+    כולל דרישות ה-Limited Use. איננו מוכרים נתוני משתמשים, איננו משתמשים בהם לפרסום, ואיננו משתמשים בהם לאימון מודלים כלליים של בינה מלאכותית.</p>
+
+  <h2>שליטה ומחיקה</h2>
+  <ul>
+    <li>בכל רגע אפשר ללחוץ באפליקציה על "נתק ומחק את כל הנתונים": הגישה לחשבון מבוטלת אצל גוגל, ומפתח הגישה והאינדקס המקומי נמחקים. קבצי ה-PDF בתיקייה שלך נשארים בשליטתך.</li>
+    <li>אפשר גם לבטל את הגישה ישירות בחשבון גוגל: <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. סיסמת אפליקציה מבטלים ב-<a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>.</li>
+    <li>למחיקת פרטי המנוי מהשרת, כתוב לנו לכתובת שלמטה.</li>
+  </ul>
+
+  <h2>יצירת קשר</h2>
+  <p>שאלות על פרטיות: <a href="mailto:support@example.com">support@example.com</a></p>
+
+  <section class="en" lang="en">
+    <h1>Privacy Policy</h1>
+    <p class="muted">Last updated: October 22, 2026</p>
+    <p>Kabala is a desktop app that finds receipts and invoices in your Gmail and saves them as PDF files on your computer.</p>
+    <h2>What we access</h2>
+    <ul>
+      <li>Gmail access is read-only, with one of two sign-in methods:
+        <ul>
+          <li><strong>Sign in with Google:</strong> the only scopes are <code>gmail.readonly</code>, plus <code>openid</code> and <code>email</code> to identify the account.</li>
+          <li><strong>App password:</strong> a connection to <code>imap.gmail.com</code> with an app password you create in your Google account. The mailbox is opened read-only.</li>
+        </ul>
+      </li>
+      <li>It searches for emails that look like receipts, invoices or payment confirmations and reads their subject, sender, date, text and PDF attachments.</li>
+      <li>Kabala never sends, deletes, moves, labels or modifies email.</li>
+    </ul>
+    <h2>Where data is processed and stored</h2>
+    <ul>
+      <li>Processing happens on your computer. Receipts are saved only to the folder you choose.</li>
+      <li>A local index (SQLite) stores extracted fields only: company, date, amount and file path. Email content is not stored in it.</li>
+      <li>Your Google access token or app password is stored encrypted in your operating system's credential vault.</li>
+      <li>We operate no server that receives or stores your email.</li>
+    </ul>
+    <h2>Subscription and payment</h2>
+    <ul>
+      <li>If you upgrade to Pro, the Kabala subscription server stores your email address (verified through Google sign-in), your plan, and your payment and invoice history.</li>
+      <li>Payment is processed by PayPal. Your card or PayPal account details never reach us.</li>
+      <li>The subscription server receives no mailbox data and no Gmail access token.</li>
+    </ul>
+    <h2>What leaves your computer</h2>
+    <ul>
+      <li><strong>Only if you enable it in Settings</strong>, the subject, sender domain, date and a text excerpt of receipt-like emails are sent to Anthropic's language model API (Claude) to confirm the receipt and extract the amount. Card numbers, email addresses and ID numbers are masked first. Attachments are never sent.</li>
+      <li>You can choose a local model (Ollama) or local rules only, in which case no email content leaves your computer.</li>
+      <li>Under Anthropic's commercial terms, data sent through its API is not used to train models.</li>
+    </ul>
+    <h2>Limited Use</h2>
+    <p class="box">Kabala's use and transfer to any other app of information received from Google APIs will adhere to the
+      <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+      including the Limited Use requirements. We do not sell user data, use it for advertising, or use it to train generalized AI models.</p>
+    <h2>Control and deletion</h2>
+    <ul>
+      <li>"Disconnect &amp; delete all data" in the app revokes Google access and deletes the token and local index. PDF files in your folder remain yours.</li>
+      <li>You can also revoke access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>, and app passwords at <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>.</li>
+      <li>To delete your subscription data from our server, email us at the address below.</li>
+    </ul>
+    <h2>Contact</h2>
+    <p><a href="mailto:support@example.com">support@example.com</a></p>
+  </section>
+</main>
+</body>
+</html>

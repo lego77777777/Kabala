@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kabala – כל הקבלות שלך, מסודרות בתיקיות</title>
+<meta name="description" content="Kabala מוצא את הקבלות והחשבוניות ב-Gmail שלך, מוריד אותן ומסדר אותן בתיקיות במחשב לפי חברה ותאריך.">
+<style>
+  :root { --bg:#fafaf9; --surface:#fff; --border:#e4e4e7; --fg:#18181b; --muted:#64646e; --accent:#4f46e5; --soft:#eeedfe; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d0d10; --surface:#16161b; --border:#2e2e38; --fg:#ececf1; --muted:#9c9caa; --accent:#7c75ff; --soft:#252348; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI","Heebo",system-ui,sans-serif; line-height:1.6; }
+  main { max-width: 760px; margin: 0 auto; padding: 64px 20px 48px; }
+  .logo { width:56px; height:56px; border-radius:16px; background:var(--accent); display:grid; place-items:center; color:#fff; font-size:28px; margin-bottom:20px; }
+  h1 { font-size: 2.2rem; margin: 0 0 8px; letter-spacing:-.02em; }
+  .lead { font-size:1.15rem; color:var(--muted); margin:0 0 32px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:14px; margin-bottom:32px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:18px; }
+  .card h3 { margin:0 0 6px; font-size:1rem; }
+  .card p { margin:0; color:var(--muted); font-size:.95rem; }
+  .note { background:var(--soft); border-radius:14px; padding:14px 18px; font-size:.95rem; }
+  a { color:var(--accent); }
+  footer { margin-top:40px; color:var(--muted); font-size:.9rem; display:flex; gap:16px; flex-wrap:wrap; }
+  .en { direction:ltr; text-align:left; margin-top:48px; padding-top:24px; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+<main>
+  <div class="logo" aria-hidden="true">🧾</div>
+  <h1>Kabala</h1>
+  <p class="lead">כל הקבלות שלך, מסודרות בתיקיות. אוטומטית.</p>
+
+  <div class="grid">
+    <div class="card"><h3>מוצא קבלות</h3><p>מחפש ב-Gmail קבלות, חשבוניות ואישורי תשלום, בעברית ובאנגלית.</p></div>
+    <div class="card"><h3>מסדר בתיקיות</h3><p>שומר כל קבלה כ-PDF במחשב שלך, לפי חברה ותאריך.</p></div>
+    <div class="card"><h3>מוכן לרואה החשבון</h3><p>ייצוא ל-Excel ו-CSV עם סיכום חודשי ולפי חברה.</p></div>
+  </div>
+
+  <p class="note"><strong>קריאה בלבד.</strong> Kabala מבקש הרשאת קריאה בלבד ל-Gmail ולעולם לא מוחק, מעביר או משנה מיילים.
+    הקבלות נשמרות רק במחשב שלך. פרטים מלאים ב<a href="privacy.html">מדיניות הפרטיות</a>.</p>
+
+  <section class="en" lang="en">
+    <h2>Kabala</h2>
+    <p>Kabala is a desktop app that finds receipts and invoices in your Gmail, saves them as PDFs on your computer,
+      and files them into folders by company and date. It uses read-only access to Gmail and never deletes or changes email.
+      See the <a href="privacy.html">privacy policy</a>.</p>
+  </section>
+
+  <footer>
+    <a href="privacy.html">מדיניות פרטיות · Privacy policy</a>
+    <span>יצירת קשר: <a href="mailto:support@example.com">support@example.com</a></span>
+  </footer>
+</main>
+</body>
+</html>

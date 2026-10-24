@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+google_client.json
+
+
+# secrets / local config
+.env*
+!.env.example
+kabala_server.json
+*private*.pem
+client_secret*.json

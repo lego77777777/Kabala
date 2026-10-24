@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kabala – מחירים</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <a class="brand" href="/pricing"><span class="logo" aria-hidden="true">🧾</span>Kabala</a>
+  </header>
+  <div class="center">
+    <h1>מחיר פשוט. בלי הפתעות.</h1>
+    <p class="lead">מתחילים בחינם. משדרגים כשצריך יותר.</p>
+    <div class="toggle" role="group" aria-label="תקופת חיוב">
+      <button type="button" data-interval="monthly" aria-pressed="true">חודשי</button>
+      <button type="button" data-interval="yearly" aria-pressed="false">שנתי <span class="save" id="save-badge"></span></button>
+    </div>
+  </div>
+  <div id="error" class="hidden" role="alert"></div>
+  <div id="loading" class="spinner" aria-label="טוען"></div>
+  <section class="grid2 hidden" id="plans" aria-live="polite">
+    <article class="card">
+      <h2 class="plan-name" id="free-name"></h2>
+      <div class="price"><small>/ חודש</small><span id="free-price"></span></div>
+      <ul class="features" id="free-features"></ul>
+      <a class="btn btn-secondary block" href="https://serewf191-tech.github.io/kabala/">הורד את Kabala</a>
+    </article>
+    <article class="card pro">
+      <span class="ribbon">הכי משתלם</span>
+      <h2 class="plan-name" id="pro-name"></h2>
+      <div class="price"><small id="pro-per"></small><span id="pro-price"></span></div>
+      <p class="muted small" id="pro-note"></p>
+      <ul class="features" id="pro-features"></ul>
+      <a class="btn btn-primary block" href="kabala://upgrade">שדרג ל-Pro</a>
+      <p class="muted small">הכפתור פותח את Kabala ומשם את התשלום המאובטח ב-PayPal. אין לך עדיין את Kabala? <a href="https://serewf191-tech.github.io/kabala/">הורד אותה</a>. ביטול בכל עת.</p>
+    </article>
+  </section>
+  <footer>מחירים כוללים מע״מ · <a href="https://serewf191-tech.github.io/kabala/privacy.html">מדיניות פרטיות</a></footer>
+</main>
+<script type="module" src="/pricing.js"></script>
+</body>
+</html>
