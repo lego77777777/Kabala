@@ -18,6 +18,12 @@ class Config:
     latest_version: str = field(default_factory=lambda: os.environ.get("LATEST_VERSION", "0.1.0"))
     download_url: str = field(default_factory=lambda: os.environ.get("DOWNLOAD_URL", "https://serewf191-tech.github.io/kabala/"))
     session_days: int = 30
+    # anti-DDoS (kabala_server/shield.py)
+    shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")
+    proxy_hops: int = field(default_factory=lambda: int(os.environ.get("KABALA_PROXY_HOPS", "0")))
+    allow_ips: frozenset[str] = field(default_factory=lambda: frozenset(
+        ip.strip() for ip in os.environ.get("KABALA_ALLOW_IPS", "").split(",") if ip.strip()))
+    rate_limit_per_minute: int = field(default_factory=lambda: int(os.environ.get("KABALA_RATE_LIMIT", "120")))
 
     def check(self) -> None:
         missing = [n for n, v in [("KABALA_SECRET", self.secret), ("GOOGLE_CLIENT_ID", self.google_client_id)] if not v]

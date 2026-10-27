@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from kabala_server import tokens
 from kabala_server.config import Config
 from kabala_server.db import Database, User
+from kabala_server.shield import Shield, ShieldConfig
 
 log = logging.getLogger("kabala_server")
 
@@ -71,6 +72,9 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
 
     app = FastAPI(title="Kabala API", docs_url=None, redoc_url=None)
+    # outermost layer: rate limits, bans and body size are checked before any route or DB work
+    app.add_middleware(Shield, config=ShieldConfig(enabled=config.shield_enabled, global_limit=config.rate_limit_per_minute,
+                                                   proxy_hops=config.proxy_hops, allow_ips=config.allow_ips))
 
     def current_user(authorization: str = Header(default="")) -> User:
         token = authorization.removeprefix("Bearer ").strip()
