@@ -53,6 +53,8 @@ class MainWindow(QMainWindow):
         backend.open_url.connect(lambda url: google_auth.open_in_browser(url))
         backend.open_checkout.connect(self._open_checkout)
         self._checkout = None
+        backend.email_code_sent.connect(self._ask_email_code)
+        self._email_dialog = None
         theme.changed.connect(self.rebuild)
 
         for i, route in enumerate(ROUTES):
@@ -112,6 +114,16 @@ class MainWindow(QMainWindow):
         dlg = ConfirmDialog(self, t("account.wipe_title", email=ltr(acc.email)), body, t("account.wipe_confirm"), t("account.cancel"))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.ctx.backend.wipe_all()
+
+    def _ask_email_code(self, email: str) -> None:
+        """The plan server emailed a sign-in code to the connected address; one dialog at a time (resends reuse it)."""
+        if self._email_dialog is not None:
+            return
+        from kabala.ui.email_code_dialog import EmailCodeDialog
+
+        self._email_dialog = EmailCodeDialog(self, self.ctx.backend, email)
+        self._email_dialog.finished.connect(lambda _r: setattr(self, "_email_dialog", None))
+        self._email_dialog.open()
 
     def _open_checkout(self, url: str) -> None:
         """PayPal checkout as the next page of this window; the browser only if the web engine is missing."""

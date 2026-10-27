@@ -34,6 +34,10 @@ class Backend(QObject):
     open_url = Signal(str)  # subscription (portal) page to open in the browser
     open_checkout = Signal(str)  # checkout page, opened in Kabala's own payment window
     billing_failed = Signal(str)
+    # sign-in by email code (accounts with no Google ID token, i.e. Gmail over IMAP)
+    email_code_sent = Signal(str)  # the address the code went to: ask the user for it
+    email_code_failed = Signal(str)  # error code, see i18n email_code.errors
+    email_verified = Signal()
 
     def __init__(self, settings: Settings | None = None, store: Store | None = None, license_url: str | None = "auto") -> None:
         super().__init__()
@@ -61,6 +65,7 @@ class Backend(QObject):
         self.signed_out_email: str | None = None
         self.signed_out_provider: str | None = None
         self._auth_thread: threading.Thread | None = None
+        self._after_email_login = None  # billing action waiting for the email code: (get, target)
         self._restore_session()
         if self.license and self.account and not self.account.demo:
             self.refresh_plan()
@@ -156,6 +161,8 @@ class Backend(QObject):
                 if not self.license.token and self.credentials is not None:
                     self._license_login()
                 elif not self.license.token and imap:
+                    if self._start_email_code(then=(get, target)):
+                        return  # continues in submit_email_code
                     # IMAP accounts have no Google token: a basic "who are you" sign-in (email only,
                     # no Gmail access, so no unverified-app screen) ties the subscription to the account.
                     self._set_plan(self.license.login(google_auth.identity_token(threading.Event())))
@@ -169,6 +176,63 @@ class Backend(QObject):
                 self.billing_failed.emit("network")
 
         threading.Thread(target=run, daemon=True).start()
+
+    # ---- sign-in by email code -------------------------------------------------------
+
+    @property
+    def email_login_supported(self) -> bool:
+        return self.license is not None and hasattr(self.license, "email_start")
+
+    def _start_email_code(self, then=None, report: bool = False) -> bool:
+        """
+        Emails a sign-in code to the connected address (call on a worker thread). True when a code was sent
+        and the UI was asked for it; False when it wasn't (e.g. the server has no email set up), so the caller
+        falls back. `report` sends the failure to the open code dialog instead.
+        """
+        if not self.email_login_supported or self.account is None:
+            return False
+        try:
+            self.license.email_start(self.account.email)
+        except licensing.LicenseError as e:
+            log.warning("email sign-in code not sent: %s", e)
+            if report:
+                self.email_code_failed.emit(str(e))
+            return False
+        self._after_email_login = then
+        self.email_code_sent.emit(self.account.email)
+        return True
+
+    def request_email_code(self) -> None:
+        """"Send the code again" from the code dialog."""
+        threading.Thread(target=self._start_email_code, kwargs={"then": self._after_email_login, "report": True}, daemon=True).start()
+
+    def submit_email_code(self, code: str) -> None:
+        """The code the user typed; result via email_verified / email_code_failed."""
+        if self.account is None or not self.email_login_supported:
+            return
+        email = self.account.email
+
+        def run() -> None:
+            try:
+                self._set_plan(self.license.email_login(email, code.strip()))
+            except licensing.LicenseError as e:
+                self.email_code_failed.emit(str(e))
+                return
+            log.info("email sign-in succeeded")
+            self.email_verified.emit()
+            then, self._after_email_login = self._after_email_login, None
+            if then:
+                get, target = then
+                try:
+                    target.emit(get())
+                except Exception as e:  # noqa: BLE001
+                    log.warning("billing request failed: %s", e)
+                    self.billing_failed.emit("network")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def cancel_email_code(self) -> None:
+        self._after_email_login = None
 
     def _load(self) -> None:
         if self.account and not self.account.demo:
@@ -239,6 +303,8 @@ class Backend(QObject):
             self.account = Account(email=address, provider="imap")
             self._load()
             self.connected.emit(self.account)
+            if self.license and not self.license.token:
+                self._start_email_code()  # the plan belongs to this address: prove it with an emailed code
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -280,6 +346,7 @@ class Backend(QObject):
         self.account = None
         self.credentials = None
         self.imap_password = None
+        self._after_email_login = None
         self.receipts, self.review = [], []
         if self.license:
             self.license.logout()

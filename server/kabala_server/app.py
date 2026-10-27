@@ -7,17 +7,20 @@ POST /api/checkout       Stripe Checkout URL for the Pro subscription
 POST /api/portal         Stripe Customer Portal URL (change card, cancel)
 POST /api/stripe/webhook subscription lifecycle from Stripe
 GET  /api/version        latest app version + download link
+POST /api/email/start    email a 6-digit sign-in code to the address connected in the app
+POST /api/email/verify   email + code → Kabala session token (identity proven by owning the mailbox)
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from kabala_server import tokens
+from kabala_server import email_login, tokens
 from kabala_server.config import Config
 from kabala_server.db import Database, User
 from kabala_server.shield import Shield, ShieldConfig
@@ -46,6 +49,15 @@ class SessionIn(BaseModel):
     id_token: str
 
 
+class EmailStartIn(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class EmailVerifyIn(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=20)
+
+
 def _plan_payload(user: User) -> dict[str, Any]:
     return {
         "email": user.email,
@@ -65,7 +77,8 @@ def _period_end(sub: dict) -> int | None:
     return int(items[0]["current_period_end"]) if items and items[0].get("current_period_end") else None
 
 
-def create_app(config: Config | None = None, verify_google: Callable[[str], dict] | None = None, stripe_client: Any = None) -> FastAPI:
+def create_app(config: Config | None = None, verify_google: Callable[[str], dict] | None = None, stripe_client: Any = None,
+               mailer: email_login.Mailer | None = None) -> FastAPI:
     config = config or Config()
     config.check()
     db = Database(config.db_path)
@@ -74,6 +87,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         import stripe
 
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
+    if mailer is None and config.smtp_url:
+        mailer = email_login.SmtpMailer(config.smtp_url, config.mail_from)
 
     app = FastAPI(title="Kabala API", docs_url=None, redoc_url=None)
 
@@ -118,6 +133,37 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         if not info.get("email") or not info.get("email_verified", False):
             raise HTTPException(401, "email not verified by Google")
         user = db.get_or_create(info["email"])
+        return {"token": tokens.issue(config.secret, user.id, user.email, config.session_days), **_plan_payload(user)}
+
+    @app.post("/api/email/start")
+    @limiter.limit("5 per 10 minutes")
+    def email_start(request: Request, body: EmailStartIn) -> dict:
+        if not mailer:
+            raise HTTPException(503, "email sign-in is not configured")
+        email = email_login.normalize_email(body.email)
+        if not email:
+            raise HTTPException(400, "invalid email address")
+        issued = db.issue_email_code(email, email_login.new_secret(), time.time(), email_login.CODE_TTL_S,
+                                     email_login.MAX_SENDS, email_login.SEND_WINDOW_S)
+        if not issued:
+            raise HTTPException(429, "too many codes for this address, try again later")
+        subject, text = email_login.code_email(email_login.make_code(*issued))
+        try:
+            mailer.send(email, subject, text)
+        except Exception as e:  # noqa: BLE001 - SMTP down or rejected the address
+            log.warning("sign-in code email failed: %s", e)
+            raise HTTPException(502, "could not send the email") from e
+        return {"ok": True, "expires_in": email_login.CODE_TTL_S}
+
+    @app.post("/api/email/verify")
+    @limiter.limit("10/minute")
+    def email_verify(request: Request, body: EmailVerifyIn) -> dict:
+        email = email_login.normalize_email(body.email)
+        challenge = db.take_email_attempt(email, time.time(), email_login.MAX_ATTEMPTS) if email else None
+        if not challenge or not email_login.check_code(*challenge, body.code):
+            raise HTTPException(401, "invalid or expired code")
+        db.close_email_code(email)
+        user = db.get_or_create(email)
         return {"token": tokens.issue(config.secret, user.id, user.email, config.session_days), **_plan_payload(user)}
 
     @app.get("/api/me")

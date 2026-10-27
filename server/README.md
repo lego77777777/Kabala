@@ -9,6 +9,25 @@ The app signs in to Google with `openid email` scopes, in addition to `gmail.rea
 The server checks the token's signature against Google, along with its expiry and that it was issued to our OAuth client. It then returns a signed session token (HMAC) that is valid for 30 days.
 There are no passwords, and no Gmail access token ever reaches the server.
 
+## Sign-in by email code
+
+Accounts connected over IMAP (Gmail with an app password) have no Google ID token, so the app proves the address another way: the server emails a 6-digit code to it, the user types it in the app, and the server returns a session for that address. The plan is then looked up by the address, exactly like a Google sign-in.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /api/email/start` `{email}` | Emails a code, valid for 10 minutes |
+| `POST /api/email/verify` `{email, code}` | Returns the session token and the plan (same as `/api/session`) |
+
+The codes come from [pyotp](https://github.com/pyauth/pyotp) (MIT), copied into `kabala_server/vendor/pyotp/` (see its `KABALA_CHANGES.md`): HOTP (RFC 4226) with a fresh random secret per challenge and a constant-time check.
+
+Limits:
+- 5 wrong tries end a challenge.
+- A resend makes the previous code stop working.
+- At most 5 codes per address per hour, and 5 per IP per 10 minutes.
+- Failed tries count toward the anti-DDoS ban.
+
+Without `SMTP_URL` the endpoints answer 503, and the app falls back to the browser-based Google identity sign-in.
+
 ## Environment variables
 
 | Variable | What it is |
@@ -21,6 +40,8 @@ There are no passwords, and no Gmail access token ever reaches the server.
 | `PUBLIC_URL` | Where to redirect after payment (default: the GitHub Pages site) |
 | `LATEST_VERSION`, `DOWNLOAD_URL` | For update notifications |
 | `KABALA_DB` | Path to the SQLite file |
+| `SMTP_URL` | For sign-in codes: `smtp://user:password@host:587` (STARTTLS) or `smtps://user:password@host:465`. Encode `@` in the user as `%40`. Gmail works with an app password; also SES, Postmark, Mailgun |
+| `MAIL_FROM` | Sender of the codes (default `Kabala <no-reply@kabala.app>`) |
 | `KABALA_PROXY_HOPS` | How many reverse proxies sit in front of the server (Render/Fly/Railway: `1`, plus Cloudflare: `2`). `0` (default) ignores `X-Forwarded-For` |
 | `KABALA_RATE_LIMIT` | Requests per minute per IP across all routes (default `120`) |
 | `KABALA_ALLOW_IPS` | Comma-separated IPs that skip all limits (e.g. uptime monitoring) |

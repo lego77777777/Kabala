@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stripe_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL);
+-- sign-in by email code (email_login.py): one open challenge per address
+CREATE TABLE IF NOT EXISTS email_codes (
+    email TEXT PRIMARY KEY,
+    secret TEXT NOT NULL,
+    counter INTEGER NOT NULL,
+    expires_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    window_start REAL NOT NULL,
+    sends INTEGER NOT NULL
+);
 """
 
 PRO_STATUSES = {"active", "trialing", "past_due"}  # past_due keeps access during Stripe's retry window
@@ -87,3 +97,42 @@ class Database:
                 (event_id, datetime.now(timezone.utc).isoformat(timespec="seconds")),
             )
             return cur.rowcount == 1
+
+    # ---- email codes ------------------------------------------------------------------
+
+    def issue_email_code(self, email: str, new_secret: str, now: float, ttl: float, max_sends: int, window: float) -> tuple[str, int] | None:
+        """
+        Opens (or renews) the challenge for `email` and returns (secret, counter) for the code to send.
+        A resend keeps the secret and moves the counter, so only the latest code works, and resets the tries.
+        None when the address already got `max_sends` codes within `window` seconds.
+        """
+        with self._lock, self._db:
+            row = self._db.execute("SELECT * FROM email_codes WHERE email=?", (email,)).fetchone()
+            if row and now - row["window_start"] < window:
+                if row["sends"] >= max_sends:
+                    return None
+                secret, counter, start, sends = row["secret"], row["counter"] + 1, row["window_start"], row["sends"] + 1
+            else:
+                secret, counter, start, sends = new_secret, 0, now, 1
+            self._db.execute(
+                "INSERT OR REPLACE INTO email_codes(email, secret, counter, expires_at, attempts, window_start, sends) VALUES (?, ?, ?, ?, 0, ?, ?)",
+                (email, secret, counter, now + ttl, start, sends),
+            )
+        return secret, counter
+
+    def take_email_attempt(self, email: str, now: float, max_attempts: int) -> tuple[str, int] | None:
+        """
+        Counts one try *before* the code is checked (so parallel guesses can't exceed the limit) and returns
+        (secret, counter), or None when there is no open challenge, it expired, or it is out of tries.
+        """
+        with self._lock, self._db:
+            row = self._db.execute(
+                "UPDATE email_codes SET attempts = attempts + 1 WHERE email=? AND expires_at > ? AND attempts < ? RETURNING secret, counter",
+                (email, now, max_attempts),
+            ).fetchone()
+        return (row["secret"], row["counter"]) if row else None
+
+    def close_email_code(self, email: str) -> None:
+        """The code was used: no further tries (the send counter for the hour is kept)."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE email_codes SET expires_at=0 WHERE email=?", (email,))

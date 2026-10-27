@@ -37,6 +37,7 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 # Responses that count as a strike, besides 429 everywhere (guessing tokens, forging webhooks).
 STRIKE_ROUTES: dict[str, tuple[int, ...]] = {
     "/api/session": (401,),
+    "/api/email/verify": (401,),
     "/api/me": (401,),
     "/api/checkout": (401,),
     "/api/portal": (401,),

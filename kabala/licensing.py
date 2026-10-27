@@ -148,6 +148,30 @@ class LicenseClient:
         _kr_set(SESSION_USER, data["token"])
         return self._cache(Plan.from_api(data))
 
+    def email_start(self, email: str) -> None:
+        """
+        Asks the server to email a 6-digit sign-in code to `email` (server/kabala_server/email_login.py).
+        For accounts without a Google ID token (Gmail over IMAP): owning the mailbox proves who you are.
+        """
+        try:
+            r = self.http.post(f"{self.base}/api/email/start", json={"email": email}, timeout=30)
+        except requests.RequestException as e:
+            raise LicenseError("network") from e
+        if r.status_code != 200:
+            raise LicenseError({400: "bad_email", 429: "rate_limited", 503: "not_configured"}.get(r.status_code, "network"))
+
+    def email_login(self, email: str, code: str) -> Plan:
+        """The code from the email → session + the plan of that address."""
+        try:
+            r = self.http.post(f"{self.base}/api/email/verify", json={"email": email, "code": code}, timeout=20)
+        except requests.RequestException as e:
+            raise LicenseError("network") from e
+        if r.status_code != 200:
+            raise LicenseError({400: "bad_code", 401: "bad_code", 422: "bad_code", 429: "rate_limited"}.get(r.status_code, "network"))
+        data = r.json()
+        _kr_set(SESSION_USER, data["token"])
+        return self._cache(Plan.from_api(data))
+
     def logout(self) -> None:
         _kr_set(SESSION_USER, None)
         _kr_set(CACHE_USER, None)

@@ -18,6 +18,9 @@ class Config:
     latest_version: str = field(default_factory=lambda: os.environ.get("LATEST_VERSION", "0.1.0"))
     download_url: str = field(default_factory=lambda: os.environ.get("DOWNLOAD_URL", "https://serewf191-tech.github.io/kabala/"))
     session_days: int = 30
+    # sign-in by email code (kabala_server/email_login.py); off without SMTP_URL
+    smtp_url: str = field(default_factory=lambda: os.environ.get("SMTP_URL", ""))
+    mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
     shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")
     proxy_hops: int = field(default_factory=lambda: int(os.environ.get("KABALA_PROXY_HOPS", "0")))
