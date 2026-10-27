@@ -57,12 +57,18 @@ const ERROR_STATUS: Record<BillingError["code"], number> = {
   invalid_currency: 400,
 };
 
+export const redactUrl = (url: string) => url.replace(/^\/r\/([^/]+)\/([^/]+)\/[^/?#]+/, "/r/$1/$2/[redacted]");
+
 export async function buildApp(d: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: d.logger === false ? false : {
       level: "info",
       // never log credentials or payment payloads
       redact: ["req.headers.authorization", 'req.headers["paypal-transmission-sig"]', 'req.headers["paypal-cert-url"]', "req.body"],
+      serializers: {
+        // /r/<id>/<expires>/<sig>.pdf downloads a customer's receipt without logging in: never write the signature
+        req: (req: { method: string; url: string }) => ({ method: req.method, url: redactUrl(req.url) }),
+      },
     },
     trustProxy: true,
     bodyLimit: 256 * 1024,

@@ -29,6 +29,7 @@ describe("POST /api/webhooks/paypal", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ verified: false, processedAt: null });
     expect(audit[0]!.id).toMatch(/^unverified:/); // a forgery can't occupy the real event id
+    expect(audit[0]!.payload).toEqual({}); // the forged body (attacker-controlled, maybe someone's data) isn't kept
     // the genuine event with that id is still processed later
     expect((await t.webhook("BILLING.SUBSCRIPTION.ACTIVATED", { id: sub.id }, { id: "WH-REAL-ID" })).json()).toEqual({ outcome: "subscription:active" });
     await t.close();

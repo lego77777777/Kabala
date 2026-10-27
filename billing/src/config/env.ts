@@ -60,6 +60,8 @@ const Env = z
     S3_ENDPOINT: z.string().url().optional(),
     S3_ACCESS_KEY_ID: z.string().optional(),
     S3_SECRET_ACCESS_KEY: z.string().optional(),
+    /** encryption at rest for receipt PDFs: AES256 (default on AWS) or none (default with S3_ENDPOINT: R2 always encrypts) */
+    S3_SSE: z.enum(["AES256", "none"]).optional(),
     /** HMAC key for expiring PDF links (32+ random characters); derived from the license key if empty */
     RECEIPT_LINK_SECRET: z.string().optional(),
 

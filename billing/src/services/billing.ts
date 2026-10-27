@@ -314,7 +314,8 @@ export class BillingService {
     const resourceId = typeof event.resource?.id === "string" ? event.resource.id : null;
     if (!verified) {
       // audited under a separate key so a forged event can never occupy a real event id
-      await this.d.db.insert(webhookEvents).values({ id: `unverified:${randomUUID()}`, eventType: event.event_type, resourceId, verified: false, payload: rawEvent as object, error: "signature verification failed" });
+      // the body is not kept: it is attacker-controlled (could fill the database) and may hold someone's personal data
+      await this.d.db.insert(webhookEvents).values({ id: `unverified:${randomUUID()}`, eventType: event.event_type, resourceId, verified: false, payload: {}, error: "signature verification failed" });
       this.log.warn({ eventType: event.event_type }, "rejected unverified webhook");
       return { status: 400, outcome: "unverified" };
     }

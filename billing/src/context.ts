@@ -46,7 +46,7 @@ export function sellerFromEnv(env: EnvConfig): Seller {
 function storageFromEnv(env: EnvConfig): Storage {
   if (env.STORAGE === "s3") {
     if (!env.S3_BUCKET || !env.S3_ACCESS_KEY_ID || !env.S3_SECRET_ACCESS_KEY) throw new Error("STORAGE=s3 needs S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY");
-    return new S3Storage(env.S3_BUCKET, { region: env.S3_REGION, endpoint: env.S3_ENDPOINT, accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY });
+    return new S3Storage(env.S3_BUCKET, { region: env.S3_REGION, endpoint: env.S3_ENDPOINT, accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY, sse: env.S3_SSE });
   }
   return new LocalStorage(env.STORAGE_DIR);
 }
@@ -65,7 +65,7 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
     throw new Error("LICENSE_PRIVATE_KEY / LICENSE_PUBLIC_KEY missing: run `npm run setup` (or keys:generate) and add them to .env");
   }
   const tokens = await TokenService.fromPem(env.LICENSE_PRIVATE_KEY.replace(/\\n/g, "\n"), env.LICENSE_PUBLIC_KEY.replace(/\\n/g, "\n"));
-  const database = openDatabase(env.DATABASE_URL);
+  const database = openDatabase(env.DATABASE_URL, env.NODE_ENV === "production");
   await database.migrate();
   const paypal = paypalFromEnv(env);
   const log = { info: (o: object, m?: string) => console.info(m, o), warn: (o: object, m?: string) => console.warn(m, o), error: (o: object, m?: string) => console.error(m, o) };

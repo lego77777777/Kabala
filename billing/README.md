@@ -16,6 +16,15 @@ Node 20+ / TypeScript · Fastify · PostgreSQL + Drizzle (PGlite for local devel
 The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially deprecated and are not used.
 `@paypal/react-paypal-js` was not needed, because the payment pages are plain HTML/JS. `paypal-js` is the same official loader that it wraps.
 
+## Encryption in transit and at rest
+
+- **PostgreSQL:** TLS is required in production (`ssl: "require"`, for pg-boss too). `?sslmode=disable` in `DATABASE_URL` is the only way to turn it off, for a database on the same private host.
+- **SMTP:** `requireTLS`, so `smtp://` must upgrade with STARTTLS or the email isn't sent. Plain text is allowed only for a local test server such as Mailpit.
+- **S3:** receipt PDFs are uploaded with `ServerSideEncryption: AES256` on AWS. R2 always encrypts, so it's off by default with `S3_ENDPOINT`. Override with `S3_SSE`.
+- **Access logs:** the signature of `/r/…` receipt links is replaced with `[redacted]`, because the link alone downloads the PDF.
+- **`.env`:** `npm run setup` and `gmail:authorize` write it owner-only (0600), since it holds the license signing key and the Gmail refresh token.
+- **Forged webhooks:** recorded without their body.
+
 ## Single source of truth for prices
 
 Everything is defined in **[`src/config/pricing.config.ts`](src/config/pricing.config.ts)**: Free (50 receipts/month, one account) and Pro at ₪29/month or ₪279/year (about 20% off). USD prices are ready but disabled until you add `"USD"` to `currencies`.

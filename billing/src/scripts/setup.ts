@@ -6,7 +6,7 @@
  *   - writes ../license_public_key.pem for the desktop app
  * Then it says which values still need to be filled in by hand.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TokenService } from "../services/tokens.js";
 
@@ -45,7 +45,9 @@ if (!get("GOOGLE_CLIENT_ID") && existsSync(googleJson)) {
   }
 }
 
-writeFileSync(envPath, env);
+// owner-only: .env holds the license signing key and the Gmail refresh token
+writeFileSync(envPath, env, { mode: 0o600 });
+chmodSync(envPath, 0o600); // mode only applies when the file is created
 
 const mode = get("PAYPAL_MODE") === "live" ? "LIVE" : "SANDBOX";
 const missing = [`PAYPAL_${mode}_CLIENT_ID`, `PAYPAL_${mode}_CLIENT_SECRET`, `PAYPAL_${mode}_WEBHOOK_ID`].filter((k) => !get(k));

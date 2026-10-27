@@ -43,9 +43,15 @@ export class LocalStorage implements Storage {
 export class S3Storage implements Storage {
   readonly kind = "s3";
   private readonly client: S3Client;
+  private readonly sse: "AES256" | undefined;
 
-  /** endpoint is needed for R2 (https://<account>.r2.cloudflarestorage.com) and MinIO; omit for AWS */
-  constructor(private readonly bucket: string, opts: { region: string; endpoint?: string; accessKeyId: string; secretAccessKey: string }) {
+  /**
+   * endpoint is needed for R2 (https://<account>.r2.cloudflarestorage.com) and MinIO; omit for AWS.
+   * sse: ask the bucket to encrypt each receipt at rest. Default: on for AWS; R2 already encrypts every object
+   * and rejects the header, so it is off when an endpoint is set unless S3_SSE=AES256.
+   */
+  constructor(private readonly bucket: string, opts: { region: string; endpoint?: string; accessKeyId: string; secretAccessKey: string; sse?: "AES256" | "none" }) {
+    this.sse = (opts.sse ?? (opts.endpoint ? "none" : "AES256")) === "AES256" ? "AES256" : undefined;
     this.client = new S3Client({
       region: opts.region,
       endpoint: opts.endpoint,
@@ -55,7 +61,7 @@ export class S3Storage implements Storage {
   }
 
   async put(key: string, data: Buffer, contentType: string): Promise<void> {
-    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: checkKey(key), Body: data, ContentType: contentType }));
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: checkKey(key), Body: data, ContentType: contentType, ServerSideEncryption: this.sse }));
   }
 
   async get(key: string): Promise<Buffer | null> {

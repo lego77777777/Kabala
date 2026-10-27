@@ -39,7 +39,10 @@ export class SmtpMailer implements Mailer {
 
   /** e.g. smtp://localhost:1025 (Mailpit), smtps://user:app-password@smtp.gmail.com:465 */
   constructor(smtpUrl: string, private readonly from: string, private readonly replyTo?: string) {
-    this.transport = nodemailer.createTransport(smtpUrl);
+    // requireTLS: with smtp:// the connection must upgrade with STARTTLS or fail, never send receipts and the
+    // password in clear (smtps:// is TLS from the start). Only a local test server (Mailpit) may skip it.
+    const local = /^smtps?:\/\/([^@/]*@)?(localhost|127\.0\.0\.1)[:/]?/i.test(smtpUrl);
+    this.transport = nodemailer.createTransport({ url: smtpUrl, requireTLS: !local });
   }
 
   async send(mail: Mail): Promise<{ id: string }> {

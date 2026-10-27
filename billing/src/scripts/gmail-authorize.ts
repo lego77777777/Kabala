@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { GMAIL_SEND_SCOPE } from "../email/gmail-api.js";
@@ -90,5 +90,7 @@ set("GMAIL_CLIENT_ID", clientId);
 set("GMAIL_CLIENT_SECRET", clientSecret);
 set("GMAIL_REFRESH_TOKEN", tokens.refresh_token);
 set("MAIL_FROM", `"Kabala <${email}>"`);
-writeFileSync(envPath, env);
+// owner-only: .env holds the license signing key and the Gmail refresh token
+writeFileSync(envPath, env, { mode: 0o600 });
+chmodSync(envPath, 0o600); // mode only applies when the file is created
 console.log(`✓ receipts will be sent from ${email} through the Gmail API (saved in billing/.env). Restart the server.`);

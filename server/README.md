@@ -32,7 +32,9 @@ Without `SMTP_URL` the endpoints answer 503, and the app falls back to the brows
 
 | Variable | What it is |
 |---|---|
-| `KABALA_SECRET` | A random string of at least 32 characters for signing sessions (e.g. `python -c "import secrets;print(secrets.token_urlsafe(48))"`) |
+| `KABALA_SECRET` | A random string of at least 32 characters; the encryption key for sessions and stored sign-in secrets (e.g. `python -c "import secrets;print(secrets.token_urlsafe(48))"`) |
+| `KABALA_OLD_SECRETS` | After changing `KABALA_SECRET`: the previous value(s), comma-separated, so existing sessions and data stay readable |
+| `KABALA_REQUIRE_HTTPS` | Default `1`: behind a proxy (`KABALA_PROXY_HOPS` > 0) plain-http requests get 403 and responses carry HSTS. `0` turns it off |
 | `GOOGLE_CLIENT_ID` | The app's OAuth client ID (from `google_client.json`) |
 | `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_…` for testing, `sk_live_…` for production) |
 | `STRIPE_PRICE_PRO` | The Price ID of the Pro subscription (`price_…`), created in Stripe → Products |
@@ -71,6 +73,16 @@ Responses carry `X-RateLimit-*` and `Retry-After`; `/health` is exempt.
 4. **Connection level** (`__main__.py`): uvicorn caps open connections, closes idle keep-alive after 5 seconds (slowloris) and limits header size.
 
 State is in memory and bounded. Only the right-most `KABALA_PROXY_HOPS` entries of `X-Forwarded-For` are trusted. With several workers each one counts separately; volumetric (network-level) floods still need a CDN such as Cloudflare in front.
+
+## Encryption
+
+[Fernet](https://github.com/pyca/cryptography) (AES + HMAC) from pyca/cryptography, copied into `kabala_server/vendor/fernet/` (changes in its `KABALA_CHANGES.md`), used through `kabala_server/crypto.py`. Each purpose gets its own key derived from `KABALA_SECRET` with HKDF.
+
+- **Session tokens:** encrypted, so the email and user id inside them can't be read. Tokens issued before this change still work until they expire.
+- **Sign-in code secrets:** encrypted in the database, and erased once the code is used.
+- **Database file:** created owner-only (0600). With `secure_delete`, deleted rows are zeroed on disk.
+- **In transit:** TLS is required behind the proxy, with HSTS.
+- **Secrets in output:** never shown in a printed config or in the logs.
 
 ## Running locally
 
