@@ -12,7 +12,7 @@ from starlette.responses import Response
 from starlette.routing import BaseRoute, Match
 from starlette.types import ASGIApp, Message, Scope, Receive, Send
 
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from . import Limiter, _rate_limit_exceeded_handler
 
 
 def _find_route_handler(

@@ -3,3 +3,4 @@ uvicorn>=0.30
 stripe>=12
 google-auth>=2.30
 requests>=2.31
+limits>=3.13

@@ -21,6 +21,10 @@ from kabala_server import tokens
 from kabala_server.config import Config
 from kabala_server.db import Database, User
 from kabala_server.shield import Shield, ShieldConfig
+from kabala_server.vendor.slowapi import Limiter, _rate_limit_exceeded_handler
+from kabala_server.vendor.slowapi.errors import RateLimitExceeded
+from kabala_server.vendor.slowapi.middleware import SlowAPIASGIMiddleware
+from kabala_server.vendor.slowapi.util import client_ip
 
 log = logging.getLogger("kabala_server")
 
@@ -72,9 +76,19 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
 
     app = FastAPI(title="Kabala API", docs_url=None, redoc_url=None)
-    # outermost layer: rate limits, bans and body size are checked before any route or DB work
-    app.add_middleware(Shield, config=ShieldConfig(enabled=config.shield_enabled, global_limit=config.rate_limit_per_minute,
-                                                   proxy_hops=config.proxy_hops, allow_ips=config.allow_ips))
+
+    # Anti-DDoS: slowapi rate limits per IP (same numbers as ../billing), inside the Shield
+    # (bans, body size, concurrency), which is the outermost layer and runs before any route or DB work.
+    def client_key(request: Request) -> str:
+        return client_ip(request.scope, config.proxy_hops)
+
+    limiter = Limiter(key_func=client_key, default_limits=[f"{config.rate_limit_per_minute}/minute"],
+                      strategy="moving-window", headers_enabled=True, enabled=config.shield_enabled)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIASGIMiddleware)
+    app.add_middleware(Shield, config=ShieldConfig(enabled=config.shield_enabled, proxy_hops=config.proxy_hops,
+                                                   allow_ips=config.allow_ips))
 
     def current_user(authorization: str = Header(default="")) -> User:
         token = authorization.removeprefix("Bearer ").strip()
@@ -85,6 +99,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         return user
 
     @app.get("/health")
+    @limiter.exempt
     def health() -> dict:
         return {"ok": True}
 
@@ -93,7 +108,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         return {"latest": config.latest_version, "url": config.download_url}
 
     @app.post("/api/session")
-    def session(body: SessionIn) -> dict:
+    @limiter.limit("20/minute")
+    def session(request: Request, body: SessionIn) -> dict:
         try:
             info = verify_google(body.id_token)
         except Exception as e:  # noqa: BLE001 - any verification failure is a 401
@@ -109,7 +125,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         return _plan_payload(user)
 
     @app.post("/api/checkout")
-    def checkout(user: User = Depends(current_user)) -> dict:
+    @limiter.limit("10/minute")
+    def checkout(request: Request, user: User = Depends(current_user)) -> dict:
         if not stripe_client:
             raise HTTPException(503, "payments are not configured")
         if user.plan == "pro":
@@ -130,7 +147,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         return {"url": session_obj["url"]}
 
     @app.post("/api/portal")
-    def portal(user: User = Depends(current_user)) -> dict:
+    @limiter.limit("10/minute")
+    def portal(request: Request, user: User = Depends(current_user)) -> dict:
         if not stripe_client:
             raise HTTPException(503, "payments are not configured")
         if not user.stripe_customer_id:
@@ -139,6 +157,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         return {"url": s["url"]}
 
     @app.post("/api/stripe/webhook")
+    @limiter.limit("600/minute")
     async def webhook(request: Request, stripe_signature: str = Header(default="")) -> dict:
         if not stripe_client:
             raise HTTPException(503, "payments are not configured")

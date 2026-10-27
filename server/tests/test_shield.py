@@ -7,7 +7,10 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from kabala_server.shield import Rule, Shield, ShieldConfig, SlidingWindow  # noqa: E402
+from kabala_server.app import create_app  # noqa: E402
+from kabala_server.config import Config  # noqa: E402
+from kabala_server.shield import Shield, ShieldConfig  # noqa: E402
+from kabala_server.vendor.slowapi.util import client_ip  # noqa: E402
 
 
 class Clock:
@@ -19,6 +22,7 @@ class Clock:
 
 
 def make(clock=None, **cfg):
+    """A bare app behind the Shield only (no slowapi), to test the Shield's own layers."""
     app = FastAPI()
 
     @app.get("/health")
@@ -26,86 +30,96 @@ def make(clock=None, **cfg):
         return {"ok": True}
 
     @app.get("/ping")
-    def ping():
+    def ping(status: int = 200):
+        if status != 200:
+            raise HTTPException(status, "nope")
         return {"ok": True}
 
     @app.post("/api/session")
-    def session(ok: bool = True):
-        if not ok:
-            raise HTTPException(401, "nope")
-        return {"ok": True}
+    def session():
+        raise HTTPException(401, "nope")
 
     @app.post("/echo")
     async def echo(request: Request):
         return {"n": len(await request.body())}
 
-    cfg.setdefault("rules", (Rule("POST", "/api/session", 3, 60),))
     app.add_middleware(Shield, config=ShieldConfig(**cfg), clock=clock or Clock())
     return TestClient(app)
 
 
-def test_global_limit_and_headers():
-    c = make(global_limit=5)
-    for i in range(5):
-        r = c.get("/ping")
-        assert r.status_code == 200
-        assert r.headers["x-ratelimit-remaining"] == str(4 - i)
-    r = c.get("/ping")
-    assert r.status_code == 429
+def real_app(tmp_path, **cfg):
+    """The real Kabala API: slowapi limits inside the Shield."""
+    config = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "s.db"), **cfg)
+
+    def verify(tok):
+        if tok == "bad":
+            raise ValueError("bad token")
+        return {"email": tok, "email_verified": True}
+
+    return TestClient(create_app(config, verify))
+
+
+# ---- slowapi (vendored) in the real app ----------------------------------------------------------
+
+
+def test_session_route_limit(tmp_path):
+    c = real_app(tmp_path)
+    statuses = [c.post("/api/session", json={"id_token": "dana@gmail.com"}).status_code for _ in range(21)]
+    assert statuses == [200] * 20 + [429]
+    r = c.post("/api/session", json={"id_token": "dana@gmail.com"})
+    assert r.json()["detail"].startswith("rate limit exceeded")
     assert int(r.headers["retry-after"]) >= 1
+    assert c.get("/api/version").status_code == 200  # other routes have their own budget
 
 
-def test_route_rule_is_stricter_than_global():
-    c = make()
-    assert [c.post("/api/session").status_code for _ in range(4)] == [200, 200, 200, 429]
-    assert c.get("/ping").status_code == 200  # other routes are unaffected
+def test_global_limit_and_headers(tmp_path):
+    c = real_app(tmp_path, rate_limit_per_minute=5)
+    r = c.get("/api/version")
+    assert r.headers["x-ratelimit-limit"] == "5"
+    assert r.headers["x-ratelimit-remaining"] == "4"
+    assert [c.get("/api/version").status_code for _ in range(5)] == [200] * 4 + [429]
+    assert all(c.get("/health").status_code == 200 for _ in range(10))  # exempt
 
 
-def test_window_slides_and_recovers():
+def test_bad_logins_get_banned(tmp_path):
+    c = real_app(tmp_path)
+    assert [c.post("/api/session", json={"id_token": "bad"}).status_code for _ in range(11)] == [401] * 10 + [403]
+    assert c.get("/api/version").status_code == 403
+
+
+def test_spoofed_forwarded_for_cannot_dodge_limits(tmp_path):
+    c = real_app(tmp_path, rate_limit_per_minute=2, proxy_hops=1)
+    statuses = [c.get("/api/version", headers={"X-Forwarded-For": f"9.9.9.{i}, 2.2.2.2"}).status_code for i in range(3)]
+    assert statuses == [200, 200, 429]
+
+
+def test_disabled(tmp_path):
+    c = real_app(tmp_path, rate_limit_per_minute=1, shield_enabled=False)
+    assert all(c.get("/api/version").status_code == 200 for _ in range(5))
+
+
+# ---- Shield layers ----------------------------------------------------------------------------------
+
+
+def test_ban_expires_and_repeat_offender_waits_longer():
     clock = Clock()
-    c = make(clock, global_limit=2)
-    assert c.get("/ping").status_code == 200
-    assert c.get("/ping").status_code == 200
-    assert c.get("/ping").status_code == 429
-    clock.t += 121  # two full windows later nothing from before counts
-    assert c.get("/ping").status_code == 200
-
-
-def test_sliding_window_weights_previous_window():
-    w = SlidingWindow(0)
-    assert all(w.hit(t, 10, 60)[0] for t in range(10))
-    # halfway through the next window, half of the previous 10 still counts
-    allowed = sum(w.hit(90, 10, 60)[0] for _ in range(10))
-    assert allowed == 5
-
-
-def test_failed_logins_lead_to_a_ban_that_expires():
-    clock = Clock()
-    c = make(clock, max_strikes=3, ban_seconds=100, rules=())
+    c = make(clock, max_strikes=3, ban_seconds=100)
     for _ in range(3):
-        assert c.post("/api/session?ok=false").status_code == 401
+        assert c.post("/api/session").status_code == 401
     r = c.get("/ping")
     assert r.status_code == 403
     assert r.headers["retry-after"] == "100"
     clock.t += 101
     assert c.get("/ping").status_code == 200
-
-
-def test_repeat_offender_is_banned_longer():
-    clock = Clock()
-    c = make(clock, max_strikes=2, ban_seconds=100, rules=())
-    for _ in range(2):
-        c.post("/api/session?ok=false")
-    clock.t += 101
-    for _ in range(2):
-        c.post("/api/session?ok=false")
+    for _ in range(3):
+        c.post("/api/session")
     assert c.get("/ping").headers["retry-after"] == "200"
 
 
-def test_rate_limit_hits_count_as_strikes():
-    c = make(global_limit=1, max_strikes=3)
-    statuses = [c.get("/ping").status_code for _ in range(5)]
-    assert statuses == [200, 429, 429, 429, 403]
+def test_any_429_is_a_strike_but_other_errors_are_not():
+    c = make(max_strikes=3)
+    assert [c.get("/ping?status=404").status_code for _ in range(5)] == [404] * 5
+    assert [c.get("/ping?status=429").status_code for _ in range(4)] == [429, 429, 429, 403]
 
 
 def test_body_size_limit():
@@ -121,15 +135,13 @@ def test_body_size_limit():
 
 
 def test_allowlist_and_exempt_paths():
-    c = make(global_limit=1, allow_ips=frozenset({"testclient"}))
-    assert all(c.get("/ping").status_code == 200 for _ in range(5))
-    c = make(global_limit=1)
-    assert all(c.get("/health").status_code == 200 for _ in range(5))
-
-
-def test_disabled():
-    c = make(enabled=False, global_limit=1)
-    assert all(c.get("/ping").status_code == 200 for _ in range(5))
+    c = make(max_strikes=1, allow_ips=frozenset({"testclient"}))
+    c.post("/api/session")
+    assert c.get("/ping").status_code == 200
+    c = make(max_strikes=1)
+    c.post("/api/session")
+    assert c.get("/ping").status_code == 403
+    assert c.get("/health").status_code == 200
 
 
 @pytest.mark.parametrize("hops,xff,expected", [
@@ -138,19 +150,12 @@ def test_disabled():
     (2, "6.6.6.6, 2.2.2.2, 10.0.0.1", "2.2.2.2"),
 ])
 def test_client_ip_behind_proxies(hops, xff, expected):
-    s = Shield(lambda *a: None, ShieldConfig(proxy_hops=hops))
     scope = {"client": ("testclient", 1), "headers": [(b"x-forwarded-for", xff.encode())]}
-    assert s.client_ip(scope) == expected
-
-
-def test_spoofed_forwarded_for_cannot_dodge_limits():
-    c = make(global_limit=2, proxy_hops=1)
-    statuses = [c.get("/ping", headers={"X-Forwarded-For": f"9.9.9.{i}, 2.2.2.2"}).status_code for i in range(3)]
-    assert statuses == [200, 200, 429]
+    assert client_ip(scope, hops) == expected
 
 
 def test_tracked_ips_are_bounded():
     s = Shield(lambda *a: None, ShieldConfig(max_tracked_ips=100))
     for i in range(1000):
-        s.check_rate(f"10.0.{i // 256}.{i % 256}", "*", 10, 60, 0)
-    assert len(s.windows) <= 200
+        s.strike(f"10.0.{i // 256}.{i % 256}", 0, "test")
+    assert len(s.jails) == 100

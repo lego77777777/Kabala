@@ -27,17 +27,29 @@ There are no passwords, and no Gmail access token ever reaches the server.
 | `KABALA_MAX_CONNECTIONS` | Open connections before uvicorn answers 503 (default `200`) |
 | `KABALA_SHIELD` | `0` turns the protection off (not recommended) |
 
-## Anti-DDoS protection (`kabala_server/shield.py`)
+## Anti-DDoS protection
 
-An ASGI middleware with no extra dependencies, adapted from the designs of slowapi/limits (rate limits, sliding window), fail2ban (bans) and `@fastify/rate-limit` (the same numbers as `../billing`). It runs before any route or database work:
+Two layers, both in front of every route and the database:
 
-1. **Ban (jail):** 10 strikes within 10 minutes → 403 for 15 minutes, doubled on each repeat (up to 24 hours). A strike is a 429, a failed sign-in (401) or a webhook with a bad signature (400).
+**Rate limits: [slowapi](https://github.com/laurents/slowapi)** (MIT, the standard rate limiter for FastAPI), copied into `kabala_server/vendor/slowapi/` and adapted for Kabala. Every change is listed in [`KABALA_CHANGES.md`](kabala_server/vendor/slowapi/KABALA_CHANGES.md) and marked `# Kabala:` in the code; the most important one closes slowapi's spoofable `X-Forwarded-For` handling. It uses the `limits` package with the moving-window strategy, per IP:
+
+| Route | Limit (same as `../billing`) |
+|---|---|
+| everything | 120/minute (`KABALA_RATE_LIMIT`) |
+| `POST /api/session` | 20/minute |
+| `POST /api/checkout`, `POST /api/portal` | 10/minute |
+| `POST /api/stripe/webhook` | 600/minute |
+
+Responses carry `X-RateLimit-*` and `Retry-After`; `/health` is exempt.
+
+**Shield (`kabala_server/shield.py`)**, for what slowapi doesn't do:
+
+1. **Ban (fail2ban-style jail):** 10 strikes within 10 minutes → 403 for 15 minutes, doubled on each repeat (up to 24 hours). A strike is any 429, a failed sign-in (401) or a webhook with a bad signature (400).
 2. **Body size:** over 256 KB → 413, also for chunked bodies without `Content-Length`.
 3. **Concurrency:** more than 10 in-flight requests from one IP → 429.
-4. **Rate limits** (sliding window, per IP): 120/minute globally; `POST /api/session` 20, `/api/checkout` and `/api/portal` 10, `/api/stripe/webhook` 600. Responses carry `X-RateLimit-*` and `Retry-After`.
-5. **Connection level** (`__main__.py`): uvicorn caps open connections, closes idle keep-alive after 5 seconds (slowloris) and limits header size.
+4. **Connection level** (`__main__.py`): uvicorn caps open connections, closes idle keep-alive after 5 seconds (slowloris) and limits header size.
 
-State is in memory and bounded, so spoofed addresses can't exhaust it. Only the right-most `KABALA_PROXY_HOPS` entries of `X-Forwarded-For` are trusted, so a client can't dodge limits by inventing an IP. With several workers each one counts separately; volumetric (network-level) floods still need a CDN such as Cloudflare in front.
+State is in memory and bounded. Only the right-most `KABALA_PROXY_HOPS` entries of `X-Forwarded-For` are trusted. With several workers each one counts separately; volumetric (network-level) floods still need a CDN such as Cloudflare in front.
 
 ## Running locally
 

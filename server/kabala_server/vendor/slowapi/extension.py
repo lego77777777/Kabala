@@ -7,7 +7,6 @@ import functools
 import inspect
 import itertools
 import logging
-import os
 import time
 from datetime import datetime
 from email.utils import formatdate, parsedate_to_datetime
@@ -78,8 +77,9 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Re
     Build a simple JSON response that includes the details of the rate limit
     that was hit. If no limit is hit, the countdown is added to headers.
     """
+    # Kabala: {"detail": ...} like every other error of the API (the original used "error")
     response = JSONResponse(
-        {"error": f"Rate limit exceeded: {exc.detail}"}, status_code=429
+        {"detail": f"rate limit exceeded: {exc.detail}"}, status_code=429
     )
     response = request.app.state.limiter._inject_headers(
         response, request.state.view_rate_limit
@@ -156,12 +156,8 @@ class Limiter:
 
         self.logger = logging.getLogger("slowapi")
 
-        dotenv_file_exists = os.path.isfile(".env")
-        self.app_config = Config(
-            ".env"
-            if dotenv_file_exists and config_filename is None
-            else config_filename
-        )
+        # Kabala: only an explicit config file; the original silently read ./.env
+        self.app_config = Config(config_filename)
 
         self.enabled = enabled
         self._default_limits = []
@@ -326,10 +322,11 @@ class Limiter:
             self._fallback_storage = MemoryStorage()
             self._fallback_limiter = STRATEGIES[strategy](self._fallback_storage)
 
-    def slowapi_startup(self) -> None:
+    def slowapi_startup(self, app) -> None:
         """
         Starlette startup event handler that links the app with the Limiter instance.
         """
+        # Kabala: the original referenced an undefined `app`; it is now a parameter
         app.state.limiter = self  # type: ignore
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
@@ -738,10 +735,12 @@ class Limiter:
                     if self.enabled:
                         if not isinstance(response, Response):
                             # get the response object from the decorated endpoint function
-                            self._inject_headers(
-                                kwargs.get("response"),  # type: ignore
-                                request.state.view_rate_limit,
-                            )
+                            # Kabala: only if the endpoint declared one (the original raised otherwise)
+                            if isinstance(kwargs.get("response"), Response):
+                                self._inject_headers(
+                                    kwargs.get("response"),  # type: ignore
+                                    request.state.view_rate_limit,
+                                )
                         else:
                             self._inject_headers(
                                 response, request.state.view_rate_limit
@@ -771,10 +770,12 @@ class Limiter:
                     if self.enabled:
                         if not isinstance(response, Response):
                             # get the response object from the decorated endpoint function
-                            self._inject_headers(
-                                kwargs.get("response"),
-                                request.state.view_rate_limit,  # type: ignore
-                            )
+                            # Kabala: only if the endpoint declared one (the original raised otherwise)
+                            if isinstance(kwargs.get("response"), Response):
+                                self._inject_headers(
+                                    kwargs.get("response"),
+                                    request.state.view_rate_limit,  # type: ignore
+                                )
                         else:
                             self._inject_headers(
                                 response, request.state.view_rate_limit
