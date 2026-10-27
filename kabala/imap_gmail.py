@@ -22,6 +22,7 @@ import email.policy
 import imaplib
 import json
 import re
+import ssl
 import time
 from email.message import Message
 from typing import Callable, Iterator
@@ -61,7 +62,9 @@ class ImapGmailClient:
     def __init__(self, address: str, password: str, connect: Callable[[], imaplib.IMAP4] | None = None) -> None:
         self.address = address
         try:
-            self._imap = (connect or (lambda: imaplib.IMAP4_SSL(IMAP_HOST, 993, timeout=30)))()
+            # An explicit context: without one, imaplib does NOT check Google's certificate, and anyone on the
+            # network path (public Wi-Fi, a hostile proxy) could pose as Gmail and capture the app password.
+            self._imap = (connect or (lambda: imaplib.IMAP4_SSL(IMAP_HOST, 993, timeout=30, ssl_context=ssl.create_default_context())))()
             self._imap.login(address, normalize_app_password(password))
             typ, _ = self._imap.select(self._all_mail(), readonly=True)
         except imaplib.IMAP4.error as e:

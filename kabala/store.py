@@ -5,6 +5,7 @@ handled (so a rescan only looks at new mail). Email bodies are never stored, onl
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from datetime import datetime
@@ -72,10 +73,15 @@ class Store:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            # owner-only (on macOS/Linux; Windows already limits %APPDATA% to the user): who paid whom and how much
+            os.close(os.open(self.path, os.O_CREAT | os.O_WRONLY, 0o600))
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
+        # deleted rows are zeroed on disk instead of staying readable in free pages
+        self._db.execute("PRAGMA secure_delete=ON")
         self._db.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -172,3 +178,7 @@ class Store:
         with self._lock, self._db:
             for table in ("receipts", "review", "processed", "meta"):
                 self._db.execute(f"DELETE FROM {table}")
+        with self._lock:
+            # "Delete everything" must really erase: flush the WAL file, then rebuild the file without old pages
+            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._db.execute("VACUUM")
