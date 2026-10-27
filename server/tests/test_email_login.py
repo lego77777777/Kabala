@@ -111,7 +111,7 @@ def test_sends_per_ip_are_limited(env):
 def test_per_address_limit_in_database(tmp_path):
     from kabala_server.db import Database
 
-    db = Database(str(tmp_path / "d.db"))
+    db = Database(str(tmp_path / "d.db"), "x" * 40)
     issued = [db.issue_email_code("a@b.co", "S" * 32, 100.0, 600, 5, 3600) for _ in range(6)]
     assert [i is not None for i in issued] == [True] * 5 + [False]
     assert [i[1] for i in issued[:5]] == [0, 1, 2, 3, 4]  # same secret, moving counter

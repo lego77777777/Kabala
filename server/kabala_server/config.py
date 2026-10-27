@@ -8,24 +8,30 @@ from dataclasses import dataclass, field
 class Config:
     """All settings come from environment variables (see server/README.md)."""
 
-    secret: str = field(default_factory=lambda: os.environ.get("KABALA_SECRET", ""))  # signs session tokens
+    # repr=False: secrets never show up in a printed config, a traceback or a debugger
+    secret: str = field(default_factory=lambda: os.environ.get("KABALA_SECRET", ""), repr=False)  # encryption key (crypto.py)
+    # previous KABALA_SECRET values after a rotation (comma-separated): still decrypt, never encrypt
+    old_secrets: tuple[str, ...] = field(default_factory=lambda: tuple(
+        s.strip() for s in os.environ.get("KABALA_OLD_SECRETS", "").split(",") if s.strip()), repr=False)
     google_client_id: str = field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_ID", ""))
-    stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""))
+    stripe_secret_key: str = field(default_factory=lambda: os.environ.get("STRIPE_SECRET_KEY", ""), repr=False)
     stripe_price_pro: str = field(default_factory=lambda: os.environ.get("STRIPE_PRICE_PRO", ""))
-    stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
+    stripe_webhook_secret: str = field(default_factory=lambda: os.environ.get("STRIPE_WEBHOOK_SECRET", ""), repr=False)
     public_url: str = field(default_factory=lambda: os.environ.get("PUBLIC_URL", "https://serewf191-tech.github.io/kabala/"))
     db_path: str = field(default_factory=lambda: os.environ.get("KABALA_DB", "kabala_server.db"))
     latest_version: str = field(default_factory=lambda: os.environ.get("LATEST_VERSION", "0.1.0"))
     download_url: str = field(default_factory=lambda: os.environ.get("DOWNLOAD_URL", "https://serewf191-tech.github.io/kabala/"))
     session_days: int = 30
     # sign-in by email code (kabala_server/email_login.py); off without SMTP_URL
-    smtp_url: str = field(default_factory=lambda: os.environ.get("SMTP_URL", ""))
+    smtp_url: str = field(default_factory=lambda: os.environ.get("SMTP_URL", ""), repr=False)
     mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
     shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")
     proxy_hops: int = field(default_factory=lambda: int(os.environ.get("KABALA_PROXY_HOPS", "0")))
     allow_ips: frozenset[str] = field(default_factory=lambda: frozenset(
         ip.strip() for ip in os.environ.get("KABALA_ALLOW_IPS", "").split(",") if ip.strip()))
+    # behind a proxy (KABALA_PROXY_HOPS > 0) only https requests are served, and browsers are told to stay on https
+    require_https: bool = field(default_factory=lambda: os.environ.get("KABALA_REQUIRE_HTTPS", "1") != "0")
     rate_limit_per_minute: int = field(default_factory=lambda: int(os.environ.get("KABALA_RATE_LIMIT", "120")))
 
     def check(self) -> None:
@@ -34,6 +40,11 @@ class Config:
             raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
         if len(self.secret) < 32:
             raise RuntimeError("KABALA_SECRET must be at least 32 characters")
+
+    @property
+    def secrets(self) -> tuple[str, ...]:
+        """The current key first (encrypts and decrypts), then old ones (decrypt only)."""
+        return (self.secret, *self.old_secrets)
 
     @property
     def stripe_enabled(self) -> bool:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from kabala_server.crypto import Secrets, box
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -17,7 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stripe_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL);
--- sign-in by email code (email_login.py): one open challenge per address
+-- sign-in by email code (email_login.py): one open challenge per address.
+-- secret is Fernet-encrypted (crypto.py), and emptied once the code is used.
 CREATE TABLE IF NOT EXISTS email_codes (
     email TEXT PRIMARY KEY,
     secret TEXT NOT NULL,
@@ -43,11 +47,17 @@ class User:
 
 
 class Database:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, secrets: Secrets) -> None:
+        if path != ":memory:" and not os.path.exists(path):
+            # owner-only from the start: emails and Stripe ids of every user live here
+            os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        self._codes = box(secrets, "email-code")
         with self._lock, self._db:
+            # deleted or overwritten rows (used sign-in secrets) are zeroed on disk, not left in free pages
+            self._db.execute("PRAGMA secure_delete = ON")
             self._db.executescript(SCHEMA)
 
     def _one(self, sql: str, args: tuple) -> User | None:
@@ -108,15 +118,18 @@ class Database:
         """
         with self._lock, self._db:
             row = self._db.execute("SELECT * FROM email_codes WHERE email=?", (email,)).fetchone()
+            old = self._codes.decrypt(row["secret"]) if row and row["secret"] else None
             if row and now - row["window_start"] < window:
                 if row["sends"] >= max_sends:
                     return None
-                secret, counter, start, sends = row["secret"], row["counter"] + 1, row["window_start"], row["sends"] + 1
+                start, sends = row["window_start"], row["sends"] + 1
+                # a resend keeps the secret and moves the counter; after a used code, a fresh secret
+                secret, counter = (old, row["counter"] + 1) if old else (new_secret, 0)
             else:
                 secret, counter, start, sends = new_secret, 0, now, 1
             self._db.execute(
                 "INSERT OR REPLACE INTO email_codes(email, secret, counter, expires_at, attempts, window_start, sends) VALUES (?, ?, ?, ?, 0, ?, ?)",
-                (email, secret, counter, now + ttl, start, sends),
+                (email, self._codes.encrypt(secret), counter, now + ttl, start, sends),
             )
         return secret, counter
 
@@ -130,9 +143,10 @@ class Database:
                 "UPDATE email_codes SET attempts = attempts + 1 WHERE email=? AND expires_at > ? AND attempts < ? RETURNING secret, counter",
                 (email, now, max_attempts),
             ).fetchone()
-        return (row["secret"], row["counter"]) if row else None
+        secret = self._codes.decrypt(row["secret"]) if row and row["secret"] else None
+        return (secret, row["counter"]) if secret else None
 
     def close_email_code(self, email: str) -> None:
-        """The code was used: no further tries (the send counter for the hour is kept)."""
+        """The code was used: no further tries, and the secret is erased (the send counter for the hour is kept)."""
         with self._lock, self._db:
-            self._db.execute("UPDATE email_codes SET expires_at=0 WHERE email=?", (email,))
+            self._db.execute("UPDATE email_codes SET expires_at=0, secret='' WHERE email=?", (email,))

@@ -18,6 +18,7 @@ import time
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from kabala_server import email_login, tokens
@@ -81,7 +82,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
                mailer: email_login.Mailer | None = None) -> FastAPI:
     config = config or Config()
     config.check()
-    db = Database(config.db_path)
+    db = Database(config.db_path, config.secrets)
     verify_google = verify_google or google_verifier(config.google_client_id)
     if stripe_client is None and config.stripe_enabled:
         import stripe
@@ -105,9 +106,21 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
     app.add_middleware(Shield, config=ShieldConfig(enabled=config.shield_enabled, proxy_hops=config.proxy_hops,
                                                    allow_ips=config.allow_ips))
 
+    if config.require_https and config.proxy_hops > 0:
+        # TLS ends at the proxy (Render, Fly, Cloudflare…); refuse anything that reached it over plain http,
+        # so tokens, sign-in codes and emails never travel unencrypted, and keep browsers on https (HSTS).
+        @app.middleware("http")
+        async def https_only(request: Request, call_next):
+            proto = request.headers.get("x-forwarded-proto", "").split(",")[-1].strip().lower()
+            if proto != "https" and request.url.path != "/health":
+                return JSONResponse({"detail": "https required"}, status_code=403)
+            response = await call_next(request)
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            return response
+
     def current_user(authorization: str = Header(default="")) -> User:
         token = authorization.removeprefix("Bearer ").strip()
-        payload = tokens.verify(config.secret, token) if token else None
+        payload = tokens.verify(config.secrets, token) if token else None
         user = db.by_id(payload["uid"]) if payload else None
         if not user:
             raise HTTPException(401, "invalid or expired session")
@@ -128,12 +141,12 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         try:
             info = verify_google(body.id_token)
         except Exception as e:  # noqa: BLE001 - any verification failure is a 401
-            log.info("rejected id token: %s", e)
+            log.info("rejected id token: %s", type(e).__name__)  # the message can quote the token or its claims
             raise HTTPException(401, "invalid Google ID token") from e
         if not info.get("email") or not info.get("email_verified", False):
             raise HTTPException(401, "email not verified by Google")
         user = db.get_or_create(info["email"])
-        return {"token": tokens.issue(config.secret, user.id, user.email, config.session_days), **_plan_payload(user)}
+        return {"token": tokens.issue(config.secrets, user.id, user.email, config.session_days), **_plan_payload(user)}
 
     @app.post("/api/email/start")
     @limiter.limit("5 per 10 minutes")
@@ -151,7 +164,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         try:
             mailer.send(email, subject, text)
         except Exception as e:  # noqa: BLE001 - SMTP down or rejected the address
-            log.warning("sign-in code email failed: %s", e)
+            log.warning("sign-in code email failed: %s", type(e).__name__)  # SMTP errors quote the address
             raise HTTPException(502, "could not send the email") from e
         return {"ok": True, "expires_in": email_login.CODE_TTL_S}
 
@@ -164,7 +177,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
             raise HTTPException(401, "invalid or expired code")
         db.close_email_code(email)
         user = db.get_or_create(email)
-        return {"token": tokens.issue(config.secret, user.id, user.email, config.session_days), **_plan_payload(user)}
+        return {"token": tokens.issue(config.secrets, user.id, user.email, config.session_days), **_plan_payload(user)}
 
     @app.get("/api/me")
     def me(user: User = Depends(current_user)) -> dict:

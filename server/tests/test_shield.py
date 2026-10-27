@@ -89,7 +89,7 @@ def test_bad_logins_get_banned(tmp_path):
 
 def test_spoofed_forwarded_for_cannot_dodge_limits(tmp_path):
     c = real_app(tmp_path, rate_limit_per_minute=2, proxy_hops=1)
-    statuses = [c.get("/api/version", headers={"X-Forwarded-For": f"9.9.9.{i}, 2.2.2.2"}).status_code for i in range(3)]
+    statuses = [c.get("/api/version", headers={"X-Forwarded-For": f"9.9.9.{i}, 2.2.2.2", "X-Forwarded-Proto": "https"}).status_code for i in range(3)]
     assert statuses == [200, 200, 429]
 
 

@@ -11,7 +11,6 @@ import time
 import typing
 from collections.abc import Iterable
 
-from cryptography import utils
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -20,6 +19,12 @@ from cryptography.hazmat.primitives.hmac import HMAC
 
 class InvalidToken(Exception):
     pass
+
+
+def _check_bytes(name: str, value: bytes) -> None:
+    # Kabala: replaces cryptography.utils._check_bytes, a private helper that may change between releases
+    if not isinstance(value, bytes):
+        raise TypeError(f"{name} must be bytes")
 
 
 _MAX_CLOCK_SKEW = 60
@@ -64,7 +69,7 @@ class Fernet:
     def _encrypt_from_parts(
         self, data: bytes, current_time: int, iv: bytes
     ) -> bytes:
-        utils._check_bytes("data", data)
+        _check_bytes("data", data)
 
         padder = _PKCS7_128.padder()
         padded_data = padder.update(data) + padder.finalize()

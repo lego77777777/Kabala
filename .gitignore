@@ -13,3 +13,8 @@ google_client.json
 kabala_server.json
 *private*.pem
 client_secret*.json
+
+# local databases (emails, receipts index)
+*.db
+*.db-wal
+*.db-shm
