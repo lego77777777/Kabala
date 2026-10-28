@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -31,6 +32,7 @@ class Backend(QObject):
     scan_failed = Signal(str)  # error code, see i18n scan.errors
     data_changed = Signal()
     plan_changed = Signal(object)  # licensing.Plan
+    payment_activated = Signal()  # Pro arrived after a payment: no key to type, it's on this account already
     open_url = Signal(str)  # subscription (portal) page to open in the browser
     open_checkout = Signal(str)  # checkout page, opened in Kabala's own payment window
     billing_failed = Signal(str)
@@ -128,7 +130,33 @@ class Backend(QObject):
         if url.lower().startswith("kabala://upgrade"):
             self.start_checkout()
             return
-        self.refresh_plan()
+        self.activate_after_payment()
+
+    # waits between plan checks after a payment: PayPal's confirmation can take a moment to reach the server
+    PAYMENT_RETRY_S = (0, 2, 4, 8, 15, 30)
+
+    def activate_after_payment(self, sleep=time.sleep) -> None:
+        """
+        Right after paying, Pro turns on by itself: the payment belongs to the signed-in account, so the app keeps
+        asking the server until it says Pro (about a minute at most). The license key is only for another computer.
+        """
+        if not self.license:
+            return
+
+        def run() -> None:
+            for wait in self.PAYMENT_RETRY_S:
+                sleep(wait)
+                if not self.license.token and self.credentials is not None:
+                    self._license_login()
+                plan = self.license.status()
+                self._set_plan(plan)
+                if plan.is_pro:
+                    log.info("Pro active after payment")
+                    self.payment_activated.emit()
+                    return
+            log.warning("payment finished but the server doesn't report Pro yet; it will on the next refresh")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _license_login(self) -> None:
         creds = self.credentials

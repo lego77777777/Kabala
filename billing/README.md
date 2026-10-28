@@ -29,7 +29,8 @@ The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially dep
 
 Every buyer gets a key like `KBL-8B98Z-25XBR-R6S2E-TGEH8` with their first payment. Later payments keep the same key.
 - **Where they see it:** it arrives by email and is also on the "My subscription" page, with Copy and New key buttons.
-- **In the desktop app:** Subscription → "I have a license key" activates Pro without signing in (`POST /api/license/activate`).
+- **No key needed after paying in the app:** the payment belongs to the signed-in account. When PayPal returns to the app (`kabala://payment-success`), it keeps checking the server until Pro is active, up to about a minute (`Backend.activate_after_payment`).
+- **On another computer:** Subscription → "I have a license key (from another computer)" activates Pro without signing in (`POST /api/license/activate`).
 
 **Generation:** [nanoid](https://github.com/ai/nanoid), copied into `src/vendor/nanoid/` (changes in its `KABALA_CHANGES.md`).
 - 100 random bits over the Crockford alphabet, so 0/O and 1/I can't be confused.

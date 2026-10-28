@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         backend.open_checkout.connect(self._open_checkout)
         self._checkout = None
         backend.email_code_sent.connect(self._ask_email_code)
+        backend.payment_activated.connect(self._welcome_pro)
         self._email_dialog = None
         theme.changed.connect(self.rebuild)
 
@@ -146,8 +147,11 @@ class MainWindow(QMainWindow):
             self.ctx.backend.handle_deep_link(message)
             if not self._in_welcome():
                 self.navigate("billing")
-            if self.tray and "payment-success" in message:
-                self.tray.showMessage("Kabala", t("billing.welcome_pro"), QSystemTrayIcon.MessageIcon.Information, 6000)
+
+    def _welcome_pro(self) -> None:
+        """Shown once the server confirms Pro after a payment (not when the payment page merely closes)."""
+        if self.tray:
+            self.tray.showMessage("Kabala", t("billing.welcome_pro"), QSystemTrayIcon.MessageIcon.Information, 6000)
 
     def bring_to_front(self) -> None:
         self.showNormal()

@@ -418,8 +418,14 @@ class BillingPage(QWidget):
         lay.addLayout(grid)
 
         if plan.managed and not plan.is_pro and b.license_keys_supported:
+            # Paying in the app turns Pro on by itself; a key is only for a computer that isn't signed in to the
+            # paying account, so the field stays folded behind a link.
+            lay.addWidget(label(t("billing.auto_activation"), "small", wrap=True, align=Qt.AlignmentFlag.AlignHCenter))
             key_card = Card(padding=20, spacing=8)
-            key_card.add(label(t("billing.have_key"), "h2"), label(t("billing.key_hint"), "muted", wrap=True))
+            key_card.add(label(t("billing.key_hint"), "muted", wrap=True))
+            key_card.hide()
+            toggle = Button(t("billing.have_key"), "link", on_click=lambda: (key_card.setVisible(not key_card.isVisible()), field.setFocus()))
+            lay.addWidget(toggle, alignment=Qt.AlignmentFlag.AlignHCenter)
             field = QLineEdit()
             field.setPlaceholderText("KBL-XXXXX-XXXXX-XXXXX-XXXXX")
             field.setAccessibleName(t("billing.have_key"))

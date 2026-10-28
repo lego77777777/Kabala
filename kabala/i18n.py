@@ -256,8 +256,9 @@ HE: dict[str, Any] = {
             "bad_key": "מפתח הרישיון לא תקין, או שהוחלף או בוטל. בדוק במייל מ-Kabala או בדף \"המנוי שלי\".",
             "rate_limited": "יותר מדי ניסיונות. חכה כמה דקות ונסה שוב.",
         },
-        "have_key": "יש לי מפתח רישיון",
-        "key_hint": "המפתח נשלח אליך במייל עם התשלום הראשון. אפשר לראות אותו גם בדף \"המנוי שלי\".",
+        "have_key": "יש לי מפתח רישיון (ממחשב אחר)",
+        "key_hint": "אחרי תשלום, Pro מופעל כאן לבד. המפתח נחוץ רק במחשב שלא מחובר לחשבון שממנו שילמת. הוא נשלח אליך במייל, ונמצא גם בדף \"המנוי שלי\".",
+        "auto_activation": "אחרי התשלום ב-PayPal, Pro מופעל אוטומטית בתוכנה. אין צורך להקליד מפתח.",
         "activate": "הפעל",
     },
     "email_code": {
@@ -563,8 +564,9 @@ EN: dict[str, Any] = {
             "bad_key": "That license key isn't valid, or it was replaced or revoked. Check the email from Kabala or your account page.",
             "rate_limited": "Too many tries. Wait a few minutes and try again.",
         },
-        "have_key": "I have a license key",
-        "key_hint": "The key was emailed to you with your first payment. It's also on your account page.",
+        "have_key": "I have a license key (from another computer)",
+        "key_hint": "After you pay, Pro turns on here by itself. The key is only for a computer that isn't signed in to the account you paid from. It was emailed to you, and it's on your account page.",
+        "auto_activation": "After you pay with PayPal, Pro turns on in the app automatically. No key to type.",
         "activate": "Activate",
     },
     "email_code": {
