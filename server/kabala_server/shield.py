@@ -43,6 +43,7 @@ STRIKE_ROUTES: dict[str, tuple[int, ...]] = {
     "/api/portal": (401,),
     "/api/stripe/webhook": (400,),
     "/admin/api/login/verify": (401,),
+    "/admin/api/login/password": (401,),
 }
 
 

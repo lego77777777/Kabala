@@ -171,7 +171,7 @@ def test_owner_connects_from_the_sign_in_page_and_is_signed_in(tmp_path):
     c, google, gm = make(tmp_path)
     page, _ = connect_via(c, "/admin/api/gmail/setup")
     assert page.status_code == 200 and "Gmail חובר" in page.text
-    assert c.get("/admin/api/me").json() == {"email": OWNER, "role": "owner"}  # Google proved who it is
+    assert c.get("/admin/api/me").json()["email"] == OWNER  # Google proved who it is
     st = c.get("/admin/api/gmail").json()
     assert st["connected"] and st["email"] == OWNER and st["source"] == "panel" and st["connectedBy"] == OWNER
     # every email now goes through the Gmail API, as the connected account

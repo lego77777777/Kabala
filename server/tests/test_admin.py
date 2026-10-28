@@ -63,7 +63,7 @@ def test_page_and_static_files_are_served_with_strict_headers(env):
 
 def test_owner_signs_in_with_an_emailed_code(env):
     c = sign_in(env)
-    assert c.get("/admin/api/me").json() == {"email": OWNER, "role": "owner"}
+    assert c.get("/admin/api/me").json() == {"email": OWNER, "role": "owner", "username": None, "hasPassword": False, "passwordSetAt": None}
     cookie = c.cookies.get("kabala_admin")
     assert OWNER not in cookie  # encrypted
     assert "httponly" in c.post("/admin/api/login/verify", json={"email": OWNER, "code": "0"}).headers.get("set-cookie", "httponly")

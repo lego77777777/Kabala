@@ -159,3 +159,7 @@ dd { margin: 0; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
 .card code { background: var(--inset); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; overflow-wrap: anywhere; }
 #login-gmail { display: grid; gap: 12px; }
+
+/* my account: username and password */
+form.card { display: grid; gap: 14px; align-content: start; }
+.field input[type=password], form.card .field input { width: 100%; }

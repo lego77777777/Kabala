@@ -26,7 +26,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from kabala_server import email_login
+from kabala_server import email_login, passwords
 import re
 
 from kabala_server.admin_billing import BillingClient, BillingNotFound, BillingRefused, BillingUnavailable
@@ -59,6 +59,17 @@ class LoginStart(BaseModel):
 class LoginVerify(BaseModel):
     email: str = Field(max_length=254)
     code: str = Field(max_length=20)
+
+
+class LoginPassword(BaseModel):
+    username: str = Field(max_length=254)  # the username, or the email
+    password: str = Field(max_length=passwords.MAX_LENGTH + 1)
+
+
+class PasswordIn(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=passwords.MAX_LENGTH + 1)
+    current: str = Field("", max_length=passwords.MAX_LENGTH + 1)
 
 
 class CompIn(BaseModel):
@@ -222,6 +233,59 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
                             secure=request.url.scheme == "https" or config.proxy_hops > 0)
         db.audit(email, how, None, ip_of(request))
 
+    @app.post("/admin/api/login/password")
+    @limiter.limit("10/minute")
+    def login_password(request: Request, response: Response, body: LoginPassword) -> dict:
+        """Username (or email) and password: signed in if they match; otherwise the same answer for every reason."""
+        row = db.admin_for_login(body.username)
+        now = time.time()
+        locked = bool(row and row["locked_until"] > now)
+        ok = passwords.verify(None if locked or not row else row["password_hash"], body.password)
+        if not ok:
+            if row and row["password_hash"]:
+                if locked:
+                    db.audit(row["email"], "login_locked", "password", ip_of(request))
+                else:
+                    locks = db.password_failed(row["email"], now, passwords.LOCK_AFTER, passwords.LOCK_S)
+                    db.audit(row["email"], "login_failed", "password" + (" (locked 15 min)" if locks else ""), ip_of(request))
+            raise HTTPException(401, "wrong username or password")
+        db.password_ok(row["email"])
+        sign_in(request, response, row["email"], "login_password")
+        return {"email": row["email"], "role": row["role"]}
+
+    @app.post("/admin/api/me/password")
+    @limiter.limit("10/minute")
+    def set_password(request: Request, body: PasswordIn, admin: dict = Depends(viewer)) -> dict:
+        """Choose (or change) your username and password. Changing an existing password needs the current one."""
+        me_row = db.admin_for_login(admin["email"])
+        if me_row and me_row["password_hash"] and not passwords.verify(me_row["password_hash"], body.current):
+            db.audit(admin["email"], "password_change_failed", None, admin["ip"])
+            raise HTTPException(403, "the current password is wrong")
+        username = passwords.normalize_username(body.username)
+        problem = passwords.username_error(username) or passwords.password_error(body.password, username, admin["email"])
+        if problem:
+            raise HTTPException(400, problem)
+        if db.username_taken(username, admin["email"]):
+            raise HTTPException(409, "שם המשתמש תפוס")
+        db.set_password(admin["email"], username, passwords.hash_password(body.password))
+        db.audit(admin["email"], "password_set", username, admin["ip"])
+        return me_out(admin)
+
+    @app.post("/admin/api/admins/password/reset")
+    def reset_password(body: EmailIn, admin: dict = Depends(owner)) -> dict:
+        """An owner removes another admin's password (e.g. forgotten); they sign in by email code and choose a new one."""
+        email = (email_login.normalize_email(body.email) or "").lower()
+        if not db.admin(email):
+            raise HTTPException(404, "not an admin")
+        db.clear_password(email)
+        db.audit(admin["email"], "password_reset", email, admin["ip"])
+        return {"admins": db.admins()}
+
+    def me_out(admin: dict) -> dict:
+        row = db.admin(admin["email"]) or {}
+        return {"email": admin["email"], "role": admin["role"], "username": row.get("username"),
+                "hasPassword": bool(row.get("has_password")), "passwordSetAt": row.get("password_set_at")}
+
     @app.post("/admin/api/logout")
     def logout(response: Response, admin: dict = Depends(viewer)) -> dict:
         response.delete_cookie(COOKIE, path="/admin")
@@ -230,7 +294,7 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
 
     @app.get("/admin/api/me")
     def me(admin: dict = Depends(viewer)) -> dict:
-        return {"email": admin["email"], "role": admin["role"]}
+        return me_out(admin)
 
     # ---- Gmail: the account every email is sent from (gmail_api.py) -------------------------
 

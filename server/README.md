@@ -89,7 +89,13 @@ State is in memory and bounded. Only the right-most `KABALA_PROXY_HOPS` entries 
 
 Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/admin-panel-prompt.md`](../docs/admin-panel-prompt.md).
 
-- **Sign-in:** enter your email and you get a code by email. Only addresses in the admin list get a code; the first owners come from `KABALA_OWNER_EMAILS`. The session is an encrypted HttpOnly cookie that lasts 8 hours.
+- **Sign-in with a username and password:** if they match, you're in; if not, you're not. The answer is the same whether the username or the password was wrong.
+  - Each admin picks a username and password on the **My account** page (signed in by email code the first time). Changing it needs the current password. An owner can reset another admin's password on **Admins & roles**.
+  - Passwords are at least 10 characters, not a common password, and can't contain the username or email.
+  - They're hashed with scrypt by [werkzeug.security](https://github.com/pallets/werkzeug) (Flask's password hashing), copied into `vendor/werkzeug_security/` (changes in its `KABALA_CHANGES.md`). The password itself is never stored, logged or shown.
+  - After 5 wrong passwords in a row, the account is locked for 15 minutes. Wrong attempts also count toward the IP ban, and an unknown username takes as long to check as a real one.
+- **Sign-in by email code:** enter your email and you get a code by email (through Gmail). Only addresses in the admin list get a code; the first owners come from `KABALA_OWNER_EMAILS`.
+- **Session:** an encrypted HttpOnly cookie that lasts 8 hours.
 - **Screens:**
   - **Dashboard:** users, Pro users, paying users, new and active this week, past-due subscriptions, and a 30-day signup chart.
   - **Users** and **Payments:** search and filters, a details window with a link to Stripe, manual Pro, and CSV export.

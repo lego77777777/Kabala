@@ -14,11 +14,20 @@
     <div class="login-card">
       <div class="brand"><span class="logo">K</span><span>Kabala</span><span class="tag">ניהול</span></div>
       <h1>כניסה לפאנל הניהול</h1>
-      <p class="muted" id="login-hint">הקלד את כתובת המייל שלך. אם היא מורשית, נשלח אליה קוד כניסה.</p>
-      <form id="login-email">
+      <p class="muted" id="login-hint">הקלד שם משתמש וסיסמה.</p>
+      <form id="login-password">
+        <label for="username">שם משתמש או מייל</label>
+        <input id="username" autocomplete="username" dir="ltr" maxlength="254" required>
+        <label for="password">סיסמה</label>
+        <input id="password" type="password" autocomplete="current-password" dir="ltr" maxlength="129" required>
+        <button class="btn primary" type="submit">כניסה</button>
+        <button class="btn link" type="button" id="to-code">אין לי סיסמה: כניסה עם קוד במייל</button>
+      </form>
+      <form id="login-email" hidden>
         <label for="email">מייל</label>
         <input id="email" type="email" autocomplete="username" dir="ltr" required>
         <button class="btn primary" type="submit">שלח קוד</button>
+        <button class="btn link" type="button" id="to-password">כניסה עם שם משתמש וסיסמה</button>
       </form>
       <form id="login-code" hidden>
         <label for="code">קוד מהמייל</label>
@@ -46,6 +55,7 @@
         <a href="#receipts" data-route="receipts"><span class="ico">🧾</span>קבלות ללקוחות</a>
         <a href="#sending" data-route="sending"><span class="ico">✉</span>שליחה אוטומטית</a>
         <a href="#gmail" data-route="gmail"><span class="ico">📧</span>Gmail</a>
+        <a href="#account" data-route="account"><span class="ico">🔒</span>החשבון שלי</a>
         <a href="#admins" data-route="admins" data-min="owner"><span class="ico">🔑</span>מנהלים והרשאות</a>
         <a href="#security" data-route="security"><span class="ico">🛡</span>אבטחה</a>
         <a href="#audit" data-route="audit" data-min="admin"><span class="ico">📜</span>יומן פעולות</a>

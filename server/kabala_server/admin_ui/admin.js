@@ -9,7 +9,8 @@ const ACTION_NAME = {
   export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP", key_revoked: "ביטל מפתח רישיון",
   receipt_sent: "שלח קבלה במייל", receipt_retry: "ניסה שוב קבלה", receipt_downloaded: "הוריד קבלה",
   receipt_settings: "שינה הגדרות שליחה", receipt_test: "שלח מייל בדיקה",
-  gmail_connect: "חיבר Gmail", gmail_disconnect: "ניתק Gmail", gmail_test: "שלח מייל בדיקה מ-Gmail", login_google: "כניסה עם Google",
+  gmail_connect: "חיבר Gmail", gmail_disconnect: "ניתק Gmail", gmail_test: "שלח מייל בדיקה מ-Gmail", login_google: "כניסה עם Google", login_password: "כניסה עם סיסמה", login_locked: "ניסיון כניסה לחשבון נעול",
+  password_set: "הגדיר שם משתמש וסיסמה", password_reset: "איפס סיסמה", password_change_failed: "סיסמה נוכחית שגויה",
   gmail_sync_paypal: "סנכרן Gmail לשרת PayPal", gmail_test_paypal: "מייל בדיקה משרת PayPal",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
@@ -21,6 +22,7 @@ const ROUTES = {
   receipts: { title: "קבלות ללקוחות", render: receiptsView },
   sending: { title: "שליחה אוטומטית", render: sendingView },
   gmail: { title: "Gmail", render: gmailView },
+  account: { title: "החשבון שלי", render: accountView },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
@@ -118,15 +120,12 @@ function showLogin() {
   me = null;
   $("app").hidden = true;
   $("login").hidden = false;
-  $("login-email").hidden = false;
-  $("login-code").hidden = true;
+  showPasswordForm();
   $("login-gmail").hidden = true;
-  $("email").focus();
   // every email goes through Gmail: until an account is connected no code can be sent, so offer to connect it
   api("/admin/api/mail-status", { allow401: true }).then((st) => {
     if (st.ready) return;
-    $("login-email").hidden = true;
-    $("login-hint").hidden = true;
+    $("to-code").hidden = true;
     $("login-gmail").hidden = false;
     $("login-gmail-btn").hidden = !st.clientConfigured;
     if (!st.clientConfigured) $("login-gmail-text").textContent = "כל המיילים נשלחים דרך Gmail API. כדי להתחיל, הגדר בשרת את GMAIL_CLIENT_ID ו-GMAIL_CLIENT_SECRET (לקוח OAuth מסוג Web application) והפעל אותו מחדש.";
@@ -139,6 +138,42 @@ $("login-gmail-btn").addEventListener("click", async () => {
     location.href = (await api("/admin/api/gmail/setup", { method: "POST", allow401: true })).url;
   } catch (e) {
     loginError(e.status === 409 ? "Gmail כבר מחובר. רענן את הדף והיכנס עם קוד." : e.message);
+  }
+});
+
+function showPasswordForm() {
+  $("login-password").hidden = false;
+  $("login-email").hidden = true;
+  $("login-code").hidden = true;
+  $("login-hint").textContent = "הקלד שם משתמש וסיסמה.";
+  loginError("");
+  $("username").focus();
+}
+
+function showCodeForm() {
+  $("login-password").hidden = true;
+  $("login-email").hidden = false;
+  $("login-code").hidden = true;
+  $("login-hint").textContent = "הקלד את כתובת המייל שלך. אם היא מורשית, נשלח אליה קוד כניסה.";
+  loginError("");
+  $("email").focus();
+}
+
+$("to-code").addEventListener("click", showCodeForm);
+$("to-password").addEventListener("click", showPasswordForm);
+
+// username + password: signed in if they match, otherwise one message for every reason
+$("login-password").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  loginError("");
+  try {
+    me = await api("/admin/api/login/password", { method: "POST", body: { username: $("username").value, password: $("password").value }, allow401: true });
+    $("password").value = "";
+    start();
+  } catch (e) {
+    loginError(e.status === 401 ? "שם המשתמש או הסיסמה שגויים. אחרי 5 ניסיונות שגויים החשבון ננעל ל-15 דקות."
+      : e.status === 429 || e.status === 403 ? "יותר מדי ניסיונות. נסה שוב בעוד כמה דקות." : e.message);
+    $("password").select();
   }
 });
 
@@ -175,10 +210,7 @@ $("login-code").addEventListener("submit", async (ev) => {
   }
 });
 
-$("login-back").addEventListener("click", () => {
-  $("login-hint").textContent = "הקלד את כתובת המייל שלך. אם היא מורשית, נשלח אליה קוד כניסה.";
-  showLogin();
-});
+$("login-back").addEventListener("click", showCodeForm);
 
 $("logout").addEventListener("click", async () => {
   await api("/admin/api/logout", { method: "POST" }).catch(() => {});
@@ -361,8 +393,16 @@ async function adminsView(view) {
           try { render((await api("/admin/api/admins/remove", { method: "POST", body: { email: a.email } })).admins); toast("הוסר"); } catch (e) { toast(e.message); }
         },
       }, "הסר");
-      return h("tr", {}, h("td", { dir: "ltr", class: "ltr" }, a.email, self ? " (את/ה)" : ""), h("td", {}, role),
-        h("td", { dir: "ltr", class: "ltr" }, a.added_by || "—"), h("td", {}, date(a.created_at)), h("td", {}, remove));
+      const reset = h("button", {
+        class: "btn sm ghost", disabled: self || !a.has_password,
+        onclick: async () => {
+          if (!(await confirmBox("לאפס סיסמה?", `הסיסמה של ${a.email} תימחק. הוא ייכנס עם קוד במייל ויבחר סיסמה חדשה בדף "החשבון שלי".`, "אפס"))) return;
+          try { render((await api("/admin/api/admins/password/reset", { method: "POST", body: { email: a.email } })).admins); toast("הסיסמה אופסה"); } catch (e) { toast(e.message); }
+        },
+      }, "אפס סיסמה");
+      const pw = a.has_password ? h("span", { class: "pill active" }, `${a.username} · מוגדרת`) : h("span", { class: "muted" }, "אין סיסמה");
+      return h("tr", {}, h("td", { dir: "ltr", class: "ltr" }, a.email, self ? " (את/ה)" : ""), h("td", {}, role), h("td", {}, pw),
+        h("td", { dir: "ltr", class: "ltr" }, a.added_by || "—"), h("td", {}, date(a.created_at)), h("td", {}, h("div", { class: "toolbar" }, reset, remove)));
     });
     const email = h("input", { type: "email", placeholder: "name@example.com", dir: "ltr", required: true });
     const role = h("select", { "aria-label": "תפקיד" }, ROLES.map((r) => h("option", { value: r, selected: r === "viewer" }, ROLE_NAME[r])));
@@ -381,7 +421,7 @@ async function adminsView(view) {
           h("dt", {}, ROLE_NAME.owner), h("dd", {}, "כמו מנהל, ובנוסף: הוספה והסרה של מנהלים ושינוי תפקידים."))),
       add,
       h("div", { class: "table-wrap" }, h("table", {},
-        h("thead", {}, h("tr", {}, ["מייל", "תפקיד", "נוסף על ידי", "מתאריך", ""].map((t) => h("th", {}, t)))),
+        h("thead", {}, h("tr", {}, ["מייל", "תפקיד", "שם משתמש וסיסמה", "נוסף על ידי", "מתאריך", ""].map((t) => h("th", {}, t)))),
         h("tbody", {}, rows))));
   };
   render((await api("/admin/api/admins")).admins);
@@ -707,6 +747,52 @@ async function sendingView(view) {
     h("div", { class: "toolbar" }, save, test, h("div", { class: "spacer" }), meta),
     ...(editable ? [] : [h("p", { class: "note" }, "כצופה אפשר לראות את ההגדרות, אבל לא לשנות אותן.")]));
   refreshPreview();
+}
+
+// ---- my account: username and password -------------------------------------------------------
+
+async function accountView(view) {
+  const m = await api("/admin/api/me");
+  const field = (label, input, hint) => h("div", { class: "field" }, h("label", {}, label), input, hint ? h("div", { class: "muted" }, hint) : null);
+  const username = h("input", { dir: "ltr", autocomplete: "username", maxlength: 32, value: m.username || m.email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "") });
+  const current = h("input", { type: "password", dir: "ltr", autocomplete: "current-password", maxlength: 129 });
+  const pw = h("input", { type: "password", dir: "ltr", autocomplete: "new-password", maxlength: 129 });
+  const again = h("input", { type: "password", dir: "ltr", autocomplete: "new-password", maxlength: 129 });
+  const error = h("div", { class: "error", role: "alert", hidden: true });
+  const save = h("button", { class: "btn primary", type: "submit" }, m.hasPassword ? "שנה סיסמה" : "הגדר סיסמה");
+  const form = h("form", {
+    class: "card",
+    onsubmit: async (ev) => {
+      ev.preventDefault();
+      error.hidden = true;
+      if (pw.value !== again.value) { error.textContent = "הסיסמאות לא זהות"; error.hidden = false; return; }
+      save.disabled = true;
+      try {
+        await api("/admin/api/me/password", { method: "POST", body: { username: username.value, password: pw.value, current: current.value } });
+        toast(m.hasPassword ? "הסיסמה שונתה" : "מעכשיו אפשר להיכנס עם שם משתמש וסיסמה");
+        route();
+      } catch (e) {
+        error.textContent = e.status === 403 ? "הסיסמה הנוכחית שגויה" : e.status === 409 ? "שם המשתמש תפוס" : e.message;
+        error.hidden = false;
+      } finally { save.disabled = false; }
+    },
+  },
+    h("h3", {}, m.hasPassword ? "שינוי סיסמה" : "כניסה עם שם משתמש וסיסמה"),
+    field("שם משתמש", username, "3 עד 32 תווים: אותיות באנגלית, ספרות ו-. _ -. אפשר להיכנס גם עם המייל."),
+    m.hasPassword ? field("סיסמה נוכחית", current) : null,
+    field(m.hasPassword ? "סיסמה חדשה" : "סיסמה", pw, "לפחות 10 תווים, לא נפוצה, ובלי שם המשתמש או המייל. משפט קצר זוכרים בקלות."),
+    field("שוב, לאימות", again),
+    error,
+    h("div", { class: "toolbar" }, save));
+  view.replaceChildren(
+    h("p", { class: "note" }, "בדף הכניסה מקלידים שם משתמש וסיסמה: אם הם נכונים נכנסים, ואם לא, לא נכנסים. אחרי 5 ניסיונות שגויים ברצף החשבון ננעל ל-15 דקות. הסיסמה נשמרת רק כ-hash מסוג scrypt, ואף אחד לא יכול לראות אותה, גם לא בעלים."),
+    h("div", { class: "cards" },
+      h("div", { class: "card" }, h("h3", {}, "החשבון"),
+        h("div", { class: "kv" }, h("span", { class: "muted" }, "מייל"), h("span", { dir: "ltr" }, m.email)),
+        h("div", { class: "kv" }, h("span", { class: "muted" }, "תפקיד"), ROLE_NAME[m.role]),
+        h("div", { class: "kv" }, h("span", { class: "muted" }, "שם משתמש"), m.username ? h("span", { dir: "ltr" }, m.username) : "—"),
+        h("div", { class: "kv" }, h("span", { class: "muted" }, "סיסמה"), m.hasPassword ? `הוגדרה ${dateTime(m.passwordSetAt)}` : "לא הוגדרה: נכנסים עם קוד במייל")),
+      form));
 }
 
 // ---- Gmail: the account every email is sent from ------------------------------------------------

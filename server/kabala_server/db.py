@@ -122,6 +122,16 @@ class User:
     current_period_end: int | None
 
 
+ADMIN_PASSWORD_COLUMNS = (
+    ("username", "TEXT"),            # lowercase, unique; sign-in accepts it or the email
+    ("password_hash", "TEXT"),       # scrypt (vendor/werkzeug_security); never sent to the panel
+    ("password_set_at", "TEXT"),
+    ("failed_logins", "INTEGER NOT NULL DEFAULT 0"),
+    ("locked_until", "REAL NOT NULL DEFAULT 0"),
+)
+ADMIN_PUBLIC = "email, role, added_by, created_at, username, password_set_at, password_hash IS NOT NULL AS has_password"
+
+
 class Database:
     def __init__(self, path: str, secrets: Secrets) -> None:
         if path != ":memory:" and not os.path.exists(path):
@@ -138,6 +148,11 @@ class Database:
             columns = {r["name"] for r in self._db.execute("PRAGMA table_info(users)")}
             if "last_seen_at" not in columns:  # added with the admin panel
                 self._db.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
+            admin_columns = {r["name"] for r in self._db.execute("PRAGMA table_info(admins)")}
+            for name, kind in ADMIN_PASSWORD_COLUMNS:  # sign-in by username and password (passwords.py)
+                if name not in admin_columns:
+                    self._db.execute(f"ALTER TABLE admins ADD COLUMN {name} {kind}")
+            self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS admins_username ON admins(username)")
 
     def _one(self, sql: str, args: tuple) -> User | None:
         with self._lock:
@@ -321,7 +336,50 @@ class Database:
 
     def admins(self) -> list[dict]:
         with self._lock:
-            return [dict(r) for r in self._db.execute("SELECT * FROM admins ORDER BY created_at, email")]
+            return [dict(r) for r in self._db.execute(f"SELECT {ADMIN_PUBLIC} FROM admins ORDER BY created_at, email")]
+
+    def admin(self, email: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute(f"SELECT {ADMIN_PUBLIC} FROM admins WHERE email=?", (email.strip().lower(),)).fetchone()
+        return dict(row) if row else None
+
+    def admin_for_login(self, login: str) -> dict | None:
+        """By username or email: what a password sign-in needs (the hash and the lock)."""
+        login = login.strip().lower()
+        with self._lock:
+            row = self._db.execute("SELECT email, role, password_hash, failed_logins, locked_until FROM admins "
+                                   "WHERE username=? OR email=? LIMIT 1", (login, login)).fetchone()
+        return dict(row) if row else None
+
+    def username_taken(self, username: str, by_other_than: str) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM admins WHERE (username=? OR email=?) AND email<>?",
+                                    (username, username, by_other_than)).fetchone() is not None
+
+    def set_password(self, email: str, username: str, password_hash: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE admins SET username=?, password_hash=?, password_set_at=?, failed_logins=0, locked_until=0 "
+                             "WHERE email=?", (username, password_hash, _now(), email))
+
+    def clear_password(self, email: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE admins SET password_hash=NULL, password_set_at=NULL, failed_logins=0, locked_until=0 "
+                             "WHERE email=?", (email,))
+
+    def password_failed(self, email: str, now: float, lock_after: int, lock_s: float) -> bool:
+        """Counts a wrong password; the lock_after-th in a row locks the account for lock_s. True when it locks."""
+        with self._lock, self._db:
+            row = self._db.execute("SELECT failed_logins FROM admins WHERE email=?", (email,)).fetchone()
+            failures = (row["failed_logins"] if row else 0) + 1
+            if failures >= lock_after:
+                self._db.execute("UPDATE admins SET failed_logins=0, locked_until=? WHERE email=?", (now + lock_s, email))
+                return True
+            self._db.execute("UPDATE admins SET failed_logins=? WHERE email=?", (failures, email))
+            return False
+
+    def password_ok(self, email: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE admins SET failed_logins=0, locked_until=0 WHERE email=?", (email,))
 
     def set_admin(self, email: str, role: str, added_by: str | None) -> None:
         assert role in ROLES
