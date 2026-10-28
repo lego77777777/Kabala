@@ -101,6 +101,12 @@ Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/ad
   - Each receipt shows its status and its latest email; its details window shows the full email history.
   - An admin can send it again to the customer or to another address (for example the accountant), download the PDF, or retry a receipt that failed.
   - Each panel request with a body is signed together with that body (`bh`), so a captured token can't send to another address.
+- **Automatic sending page:** controls how receipts are emailed. Settings are stored on the PayPal server and apply from the next receipt.
+  - Turn automatic sending to the customer on or off. When it's off, the PDF is created and waits for a manual send.
+  - A hidden copy of every receipt to the accountant or the business archive.
+  - The subject and opening line in Hebrew and English, with a live preview, `{{variables}}` and a "send me a test email" button.
+  - Failed receipts are retried automatically, up to 3 times an hour apart.
+  - Templates are [mustache](https://github.com/janl/mustache.js), and only plain `{{variables}}` from a fixed list are allowed.
 - **Live data:** the open page re-reads its data every 30 seconds, so new users, payments and keys appear without reloading.
   - Each request is a 60-second, single-use JWT for one path, signed by the panel with Ed25519 using [PyJWT](https://github.com/jpadilla/pyjwt), copied into `vendor/jwt/` (changes in its `KABALA_CHANGES.md`).
   - The billing server verifies it with `jose` and holds only the public key.

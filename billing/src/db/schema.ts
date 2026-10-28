@@ -206,6 +206,26 @@ export const licenseKeys = pgTable(
   (t) => [index("license_keys_user_idx").on(t.userId), uniqueIndex("license_keys_one_active_uq").on(t.userId).where(sql`status = 'active'`)],
 );
 
+/**
+ * How receipts are emailed (src/receipts/settings.ts), edited in the admin panel: a single row (id = 1).
+ * Empty texts mean the built-in wording.
+ */
+export const receiptSettings = pgTable("receipt_settings", {
+  id: integer("id").primaryKey().default(1),
+  /** email each receipt to the customer as soon as its PDF exists; off = the PDF waits for a manual send */
+  autoSend: boolean("auto_send").notNull().default(true),
+  /** hidden copy of every receipt (the business's archive or accountant); empty = RECEIPT_COPY_TO */
+  copyTo: text("copy_to"),
+  subjectHe: text("subject_he"),
+  subjectEn: text("subject_en"),
+  introHe: text("intro_he"),
+  introEn: text("intro_en"),
+  /** failed receipts get up to 3 more automatic tries, an hour apart */
+  autoRetry: boolean("auto_retry").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
 /** @deprecated replaced by `receipts`. Kept so older databases still migrate; nothing new is written to it. */
 export const invoices = pgTable("invoices", {
   id: uuid("id").primaryKey().defaultRandom(),

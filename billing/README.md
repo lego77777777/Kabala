@@ -25,6 +25,24 @@ The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially dep
 - **`.env`:** `npm run setup` and `gmail:authorize` write it owner-only (0600), since it holds the license signing key and the Gmail refresh token.
 - **Forged webhooks:** recorded without their body.
 
+## Automatic sending settings (`src/receipts/settings.ts`)
+
+The admin panel edits one `receipt_settings` row (migration 0003). It is read on every send, so a change applies to the next receipt.
+
+| Setting | Effect |
+|---|---|
+| `autoSend` | Email each receipt as soon as its PDF exists. When off, the PDF waits for a manual send, and the sweep doesn't send it either |
+| `copyTo` | A hidden copy (Bcc) of every receipt. Overrides `RECEIPT_COPY_TO` |
+| `subjectHe/En`, `introHe/En` | Subject and opening line. Empty means the built-in wording; refunds keep their own wording |
+| `autoRetry` | The sweep retries failed receipts up to 3 times, an hour apart (`AUTO_RETRY`) |
+
+**Templates:** [mustache.js](https://github.com/janl/mustache.js), copied into `src/vendor/mustache/` (changes in its `KABALA_CHANGES.md`).
+- `src/receipts/templates.ts` allows only `{{name}} {{number}} {{amount}} {{month}} {{plan}} {{business}}`.
+- Sections, partials, `{{{ }}}` and changed delimiters are refused with a message that names the tag.
+- Line breaks are removed from the subject, so it can't add mail headers.
+
+**Preview and test:** `POST /api/admin/receipt-settings/preview` and `/test` use an unsaved draft. The test sends the newest receipt to the admin, marked `[בדיקה / test]`, with no copy.
+
 ## License keys (`src/licenses/keys.ts`)
 
 Every buyer gets a key like `KBL-8B98Z-25XBR-R6S2E-TGEH8` with their first payment. Later payments keep the same key.

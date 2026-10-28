@@ -478,10 +478,19 @@ Context.prototype.lookup = function lookup (name) {
  * string, given a context. It also maintains a cache of templates to
  * avoid the need to parse the same template twice.
  */
+// Kabala: at most this many parsed templates are kept. The original cache grew forever, and the admin
+// panel's live preview renders a new template on every keystroke.
+var MAX_CACHED_TEMPLATES = 200;
+
 function Writer () {
   this.templateCache = {
     _cache: {},
+    _keys: [],
     set: function set (key, value) {
+      if (!(key in this._cache)) {
+        this._keys.push(key);
+        if (this._keys.length > MAX_CACHED_TEMPLATES) delete this._cache[this._keys.shift()];
+      }
       this._cache[key] = value;
     },
     get: function get (key) {
@@ -489,6 +498,7 @@ function Writer () {
     },
     clear: function clear () {
       this._cache = {};
+      this._keys = []; // Kabala: see MAX_CACHED_TEMPLATES
     }
   };
 }

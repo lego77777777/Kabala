@@ -208,6 +208,21 @@ class FakeBilling:
     def __init__(self, public_key, down=False):
         self.public_key, self.down, self.claims, self.bodies = public_key, down, [], []
 
+    def settings(self, method, path, data):
+        import json
+        from types import SimpleNamespace as ns
+
+        js = {"content-type": "application/json"}
+        body = json.loads(data) if data else {}
+        if "{{nope}}" in json.dumps(body, ensure_ascii=False):
+            return ns(status_code=400, headers=js, json=lambda: {"error": "invalid_template", "field": "intro", "message": "אין משתנה בשם {{nope}}"})
+        if path.endswith("/preview"):
+            return ns(status_code=200, headers=js, json=lambda: {"subject": "קבלה 000001", "intro": body.get("introHe") or "תודה"})
+        if path.endswith("/test"):
+            return ns(status_code=200, headers=js, json=lambda: {"ok": True, "to": "owner@kabala.app"})
+        self.saved = {**getattr(self, "saved", {"autoSend": True, "copyTo": "archive@kabala.app"}), **body}
+        return ns(status_code=200, headers=js, json=lambda: dict(self.saved))
+
     def receipts(self, method, path, data):
         import json
         from types import SimpleNamespace as ns
@@ -250,6 +265,8 @@ class FakeBilling:
         path = urlparse(url).path
         if path.startswith("/api/admin/receipts"):
             return self.receipts(method, path, data)
+        if path.startswith("/api/admin/receipt-settings"):
+            return self.settings(method, path, data)
         if method == "POST" and path.endswith("/revoke"):
             return ns(status_code=200 if KEY_ID in path else 404, json=lambda: {"ok": True})
         if path == "/api/admin/keys":
@@ -352,3 +369,29 @@ def test_paypal_receipts_viewer_masked_and_read_only(tmp_path):
     assert detail["email"] == "da***@gmail.com" and detail["emails"][0]["to"] == "da***@gmail.com, cp***@office.co.il"
     assert v.post(f"/admin/api/paypal/receipts/{RID}/send", json={}, headers=H).status_code == 403
     assert v.get(f"/admin/api/paypal/receipts/{RID}/pdf").status_code == 403
+
+
+def test_paypal_receipt_settings_save_preview_test(tmp_path):
+    import json
+
+    env_, fake = paypal_env(tmp_path)
+    owner = sign_in(env_)
+    assert owner.get("/admin/api/paypal/receipt-settings").json()["autoSend"] is True
+    saved = owner.post("/admin/api/paypal/receipt-settings", json={"autoSend": False, "introHe": "שלום {{name}}"}, headers=H).json()
+    assert saved["autoSend"] is False and saved["introHe"] == "שלום {{name}}"
+    assert json.loads(fake.bodies[-1]) == {"autoSend": False, "introHe": "שלום {{name}}"}  # only what was changed
+    bad = owner.post("/admin/api/paypal/receipt-settings", json={"introHe": "שלום {{nope}}"}, headers=H)
+    assert bad.status_code == 400 and "{{nope}}" in bad.json()["detail"]
+    assert owner.post("/admin/api/paypal/receipt-settings/preview", json={"introHe": "טיוטה"}, headers=H).json()["intro"] == "טיוטה"
+    assert owner.post("/admin/api/paypal/receipt-settings/test", json={}, headers=H).json()["ok"] is True
+    actions = [e["action"] for e in owner.get("/admin/api/audit").json()["entries"]]
+    assert actions[:2] == ["receipt_test", "receipt_settings"]
+
+
+def test_paypal_receipt_settings_viewer_read_only(tmp_path):
+    env_, _ = paypal_env(tmp_path)
+    sign_in(env_).post("/admin/api/admins", json={"email": "view@kabala.app", "role": "viewer"}, headers=H)
+    v = sign_in(env_, "view@kabala.app")
+    assert v.get("/admin/api/paypal/receipt-settings").status_code == 200
+    assert v.post("/admin/api/paypal/receipt-settings", json={"autoSend": False}, headers=H).status_code == 403
+    assert v.post("/admin/api/paypal/receipt-settings/test", json={}, headers=H).status_code == 403

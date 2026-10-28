@@ -8,6 +8,8 @@ import { T, type Locale } from "../../receipts/texts.js";
 
 export interface ReceiptEmailProps {
   locale: Locale;
+  /** opening line from the admin panel's settings (already filled in); null = the built-in thanks */
+  intro?: string | null;
   kind: "receipt" | "refund";
   customerName: string | null;
   documentTitle: string;
@@ -71,7 +73,7 @@ export function ReceiptEmail(p: ReceiptEmailProps) {
 
           <Section className="card" style={{ backgroundColor: C.card, border: `1px solid ${C.line}`, borderRadius: "14px", padding: "28px 28px 24px" }}>
             <Text className="ink" style={text({ fontSize: "18px", fontWeight: 700, marginBottom: "8px" })}>{t.hello(p.customerName)}</Text>
-            <Text className="ink" style={text({ marginBottom: "22px" })}>{p.kind === "refund" ? t.refundThanks : t.thanks}</Text>
+            <Text className="ink" style={text({ marginBottom: "22px", whiteSpace: "pre-line" })}>{p.intro || (p.kind === "refund" ? t.refundThanks : t.thanks)}</Text>
 
             <Text className="muted" style={text({ fontSize: "13px", fontWeight: 700, color: C.muted, letterSpacing: "0.3px", marginBottom: "6px" })}>{t.summary}</Text>
             <Section className="line" style={{ borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, padding: "8px 0" }}>
@@ -122,7 +124,7 @@ export function receiptText(p: ReceiptEmailProps): string {
   return [
     t.hello(p.customerName),
     "",
-    p.kind === "refund" ? t.refundThanks : t.thanks,
+    p.intro || (p.kind === "refund" ? t.refundThanks : t.thanks),
     "",
     `${t.summary}:`,
     ...rows.map(([label, value]) => `  ${label}: ${value}`),

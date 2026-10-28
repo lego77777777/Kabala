@@ -72,6 +72,17 @@ class EmailIn(BaseModel):
     email: str = Field(max_length=254)
 
 
+class ReceiptSettingsIn(BaseModel):
+    autoSend: bool | None = None
+    autoRetry: bool | None = None
+    copyTo: str | None = Field(default=None, max_length=254)
+    subjectHe: str | None = Field(default=None, max_length=150)
+    subjectEn: str | None = Field(default=None, max_length=150)
+    introHe: str | None = Field(default=None, max_length=1000)
+    introEn: str | None = Field(default=None, max_length=1000)
+    locale: str | None = Field(default=None, pattern="^(he|en)$")
+
+
 class SendIn(BaseModel):
     to: str | None = Field(default=None, max_length=254)  # empty: the customer (and their accountant copy)
 
@@ -410,4 +421,50 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
     def paypal_receipt_retry(rid: str, admin: dict = Depends(admin_)) -> dict:
         result = paypal(f"/api/admin/receipts/{check_id(rid)}/retry", admin, method="POST", body={})
         db.audit(admin["email"], "receipt_retry", rid, admin["ip"])
+        return result
+
+    # ---- "Automatic sending" settings of receipts (stored on the billing server) ----------------------
+
+    def settings_body(body: ReceiptSettingsIn) -> dict:
+        return body.model_dump(exclude_unset=True)
+
+    def paypal_refusal_detail(path: str, admin: dict, body: dict) -> dict:
+        """Like paypal(), but a 400 from billing (a broken template) keeps its message for the form."""
+        try:
+            return billing.post(path, admin["email"], admin["role"], body)
+        except BillingRefused as e:
+            raise HTTPException(400, str(e)) from e
+        except BillingNotFound as e:
+            raise HTTPException(404, "not found") from e
+        except BillingUnavailable as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.get("/admin/api/paypal/receipt-settings")
+    def receipt_settings(admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/receipt-settings", admin)
+
+    @app.post("/admin/api/paypal/receipt-settings")
+    def save_receipt_settings(body: ReceiptSettingsIn, admin: dict = Depends(admin_)) -> dict:
+        if not billing:
+            raise HTTPException(404, "PayPal billing is not connected")
+        data = settings_body(body)
+        data.pop("locale", None)
+        result = paypal_refusal_detail("/api/admin/receipt-settings", admin, data)
+        db.audit(admin["email"], "receipt_settings", ", ".join(sorted(data)), admin["ip"])
+        return result
+
+    @app.post("/admin/api/paypal/receipt-settings/preview")
+    def preview_receipt_settings(body: ReceiptSettingsIn, admin: dict = Depends(viewer)) -> dict:
+        if not billing:
+            raise HTTPException(404, "PayPal billing is not connected")
+        return paypal_refusal_detail("/api/admin/receipt-settings/preview", admin, settings_body(body))
+
+    @app.post("/admin/api/paypal/receipt-settings/test")
+    def test_receipt_settings(body: ReceiptSettingsIn, admin: dict = Depends(admin_)) -> dict:
+        if not billing:
+            raise HTTPException(404, "PayPal billing is not connected")
+        data = settings_body(body)
+        data.pop("locale", None)
+        result = paypal_refusal_detail("/api/admin/receipt-settings/test", admin, data)
+        db.audit(admin["email"], "receipt_test", admin["email"], admin["ip"])
         return result

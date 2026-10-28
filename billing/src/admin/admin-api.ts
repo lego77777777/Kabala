@@ -12,6 +12,10 @@
  *   GET /api/admin/receipts/:id/pdf                  the PDF (admin and up)
  *   POST /api/admin/receipts/:id/send  { to? }      email it again: to the customer, or to one address (admin+)
  *   POST /api/admin/receipts/:id/retry              a failed receipt gets another go (admin+)
+ *   GET  /api/admin/receipt-settings                  "Automatic sending": on/off, copy, texts, auto retry
+ *   POST /api/admin/receipt-settings          {...}  save them (admin+)
+ *   POST /api/admin/receipt-settings/preview  {...}  subject + opening line as the newest receipt would get them
+ *   POST /api/admin/receipt-settings/test     {...}  email the newest receipt, worded so, to the admin (admin+)
  *
  * A request with a body also carries `bh`, the SHA-256 of the body (sorted keys), so a token can't be reused
  * with another body (e.g. another recipient).
@@ -30,6 +34,10 @@ import type { Db } from "../db/client.js";
 import { emailLogs, payments, plans, receipts, subscriptions, users } from "../db/schema.js";
 import { isMailbox, normalizeMailbox } from "../email/address.js";
 import type { ReceiptPipeline } from "../receipts/pipeline.js";
+import { AUTO_RETRY } from "../receipts/pipeline.js";
+import type { ReceiptSettingsService } from "../receipts/settings.js";
+import { checkPatch } from "../receipts/settings.js";
+import { LIMITS, TemplateError, VARIABLES } from "../receipts/templates.js";
 import type { Storage } from "../storage/storage.js";
 import type { LicenseKeyService } from "../licenses/keys.js";
 import { isEntitled } from "../services/subscription-state.js";
@@ -68,7 +76,7 @@ class SeenTokens {
 
 export async function registerAdminApi(app: FastifyInstance, d: {
   db: Db; publicKeyPem: string; mode: string; keys?: LicenseKeyService; now?: () => Date;
-  receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry">; storage: Storage };
+  receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry" | "sendTest" | "preview">; storage: Storage; settings?: ReceiptSettingsService };
 }) {
   const key = await importSPKI(d.publicKeyPem.replace(/\\n/g, "\n"), "EdDSA");
   const now = d.now ?? (() => new Date());
@@ -283,5 +291,76 @@ export async function registerAdminApi(app: FastifyInstance, d: {
     const result = await d.receipts.pipeline.retry(id);
     if (result !== "queued") return reply.code(result === "not_found" ? 404 : 409).send({ error: result });
     return { ok: true };
+  });
+
+  // ---- "Automatic sending" settings ------------------------------------------------------------------------
+
+  const SettingsBody = z.object({
+    autoSend: z.boolean().optional(),
+    autoRetry: z.boolean().optional(),
+    copyTo: z.string().max(254).nullable().optional(),
+    subjectHe: z.string().max(LIMITS.subject).nullable().optional(),
+    subjectEn: z.string().max(LIMITS.subject).nullable().optional(),
+    introHe: z.string().max(LIMITS.intro).nullable().optional(),
+    introEn: z.string().max(LIMITS.intro).nullable().optional(),
+    locale: z.enum(["he", "en"]).optional(), // preview only
+  }).strict();
+  const settingsOut = async (c: AdminClaims) => {
+    const s = await d.receipts!.settings!.get();
+    return { ...s, copyTo: s.copyTo && c.role === "viewer" ? maskEmail(s.copyTo) : s.copyTo, variables: VARIABLES, limits: LIMITS, retry: AUTO_RETRY };
+  };
+  const templateError = (reply: FastifyReply, e: unknown) => {
+    if (e instanceof TemplateError) return reply.code(400).send({ error: "invalid_template", field: e.field, message: e.message });
+    throw e;
+  };
+
+  app.get("/api/admin/receipt-settings", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (!d.receipts?.settings) return reply.code(404).send({ error: "not_configured" });
+    return settingsOut(c);
+  });
+
+  app.post("/api/admin/receipt-settings", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role === "viewer") return reply.code(403).send({ error: "forbidden" });
+    if (!d.receipts?.settings) return reply.code(404).send({ error: "not_configured" });
+    const { locale: _l, ...patch } = SettingsBody.parse(req.body ?? {});
+    try {
+      await d.receipts.settings.update(patch, c.sub);
+    } catch (e) {
+      return templateError(reply, e);
+    }
+    req.log.info({ by: c.sub, fields: Object.keys(patch) }, "receipt settings changed from the admin panel");
+    return settingsOut(c);
+  });
+
+  app.post("/api/admin/receipt-settings/preview", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (!d.receipts) return reply.code(404).send({ error: "not_configured" });
+    const { locale, ...draft } = SettingsBody.parse(req.body ?? {});
+    try {
+      return await d.receipts.pipeline.preview(checkPatch(draft), locale ?? "he");
+    } catch (e) {
+      return templateError(reply, e);
+    }
+  });
+
+  app.post("/api/admin/receipt-settings/test", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role === "viewer") return reply.code(403).send({ error: "forbidden" });
+    if (!d.receipts) return reply.code(404).send({ error: "not_configured" });
+    const { locale: _l, ...draft } = SettingsBody.parse(req.body ?? {});
+    let result: "queued" | "no_receipts";
+    try {
+      result = await d.receipts.pipeline.sendTest(c.sub, checkPatch(draft));
+    } catch (e) {
+      return templateError(reply, e);
+    }
+    if (result !== "queued") return reply.code(409).send({ error: result });
+    return { ok: true, to: c.sub };
   });
 }

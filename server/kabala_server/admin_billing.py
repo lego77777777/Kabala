@@ -89,7 +89,8 @@ class BillingClient:
         if r.status_code == 404:
             raise BillingNotFound(path)
         if r.status_code in (400, 409):
-            raise BillingRefused(r.json().get("error", "refused") if "json" in r.headers.get("content-type", "") else "refused")
+            body = r.json() if "json" in r.headers.get("content-type", "") else {}
+            raise BillingRefused(body.get("message") or body.get("error") or "refused")
         if r.status_code != 200:
             raise BillingUnavailable(f"billing server answered {r.status_code}")
         return r.content if raw else r.json()

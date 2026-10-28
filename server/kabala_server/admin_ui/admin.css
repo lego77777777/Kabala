@@ -42,7 +42,7 @@ a { color: var(--accent); }
 .btn.sm { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: .5; cursor: default; }
 
-input, select { font: inherit; color: var(--fg); background: var(--inset); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+input, select, textarea { font: inherit; color: var(--fg); background: var(--inset); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
 
 /* sign-in */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
@@ -110,6 +110,25 @@ td.ltr { direction: ltr; text-align: end; }
 .pill.past_due { background: var(--warn-soft); color: var(--warn); }
 .pill.canceled { background: var(--danger-soft); color: var(--danger); }
 .pill.comp { background: var(--accent-soft); color: var(--accent); }
+
+/* settings */
+.switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.switch input { width: 20px; height: 20px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+.field label.switch { font-weight: 400; font-size: 15px; }
+.switch .switch-title { font-weight: 700; }
+.switch .muted { font-size: 14px; }
+.field { display: grid; gap: 6px; }
+.field label { font-weight: 700; font-size: 14px; }
+textarea { min-height: 90px; resize: vertical; width: 100%; }
+.field input[type=text], .field input[type=email] { width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 13px/1.6 Heebo, sans-serif; border: 1px dashed var(--line); background: var(--panel); color: var(--accent); border-radius: 99px; padding: 1px 10px; cursor: pointer; }
+.chip:hover { background: var(--accent-soft); }
+.preview { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; background: var(--inset); }
+.preview .subject { font-weight: 700; }
+.preview .intro { white-space: pre-line; }
+.field-error { color: var(--danger); font-size: 13px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
 
 /* dialog & toast */
 dialog { border: 0; border-radius: 16px; padding: 0; background: var(--panel); color: var(--fg); width: min(680px, calc(100% - 32px)); box-shadow: 0 20px 60px rgba(0,0,0,.3); }

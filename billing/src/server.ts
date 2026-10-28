@@ -16,7 +16,7 @@ const app = await buildApp({
   production: env.NODE_ENV === "production",
   receipts: { storage: ctx.storage, links: ctx.links, resend: (id, uid) => ctx.pipeline.resend(id, uid) },
   keys: ctx.keys,
-  admin: env.ADMIN_PANEL_PUBLIC_KEY ? { db: ctx.database.db, publicKeyPem: env.ADMIN_PANEL_PUBLIC_KEY, keys: ctx.keys, receipts: { pipeline: ctx.pipeline, storage: ctx.storage } } : undefined,
+  admin: env.ADMIN_PANEL_PUBLIC_KEY ? { db: ctx.database.db, publicKeyPem: env.ADMIN_PANEL_PUBLIC_KEY, keys: ctx.keys, receipts: { pipeline: ctx.pipeline, storage: ctx.storage, settings: ctx.receiptSettings } } : undefined,
 });
 
 const close = async () => {

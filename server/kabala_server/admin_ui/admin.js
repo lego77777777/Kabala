@@ -8,6 +8,7 @@ const ACTION_NAME = {
   login: "כניסה", login_failed: "קוד שגוי", logout: "יציאה", comp_on: "נתן Pro ידני", comp_off: "ביטל Pro ידני",
   export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP", key_revoked: "ביטל מפתח רישיון",
   receipt_sent: "שלח קבלה במייל", receipt_retry: "ניסה שוב קבלה", receipt_downloaded: "הוריד קבלה",
+  receipt_settings: "שינה הגדרות שליחה", receipt_test: "שלח מייל בדיקה",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
 const ROUTES = {
@@ -16,6 +17,7 @@ const ROUTES = {
   payments: { title: "תשלומים (Stripe)", render: (v) => usersView(v, true) },
   paypal: { title: "PayPal", render: paypalView, paypal: true },
   receipts: { title: "קבלות ללקוחות", render: receiptsView, paypal: true },
+  sending: { title: "שליחה אוטומטית", render: sendingView, paypal: true },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
@@ -175,7 +177,7 @@ function start() {
   api("/admin/api/paypal/status").then((s) => {
     paypalConnected = s.connected;
     for (const a of document.querySelectorAll("[data-paypal]")) a.hidden = !s.connected;
-    if (location.hash === "#paypal" || location.hash === "#receipts") route();
+    if (["#paypal", "#receipts", "#sending"].includes(location.hash)) route();
   }).catch(() => {});
 }
 
@@ -498,7 +500,7 @@ async function paypalView(view) {
 
 const RECEIPT_STATUS = { pending: ["בהכנה", ""], generated: ["נוצרה, נשלחת", "trialing"], sent: ["נשלחה", "active"], failed: ["נכשלה", "canceled"] };
 const EMAIL_STATUS = { queued: ["בתור", ""], sent: ["נשלח", "active"], failed: ["נכשל", "canceled"] };
-const TRIGGER = { auto: "אוטומטי אחרי התשלום", resend: "הלקוח ביקש שוב", admin: "נשלח מהפאנל" };
+const TRIGGER = { auto: "אוטומטי אחרי התשלום", resend: "הלקוח ביקש שוב", admin: "נשלח מהפאנל", retry: "ניסיון חוזר", test: "מייל בדיקה" };
 const statusPillOf = (map, s) => h("span", { class: `pill ${(map[s] || [s, ""])[1]}` }, (map[s] || [s])[0]);
 
 async function receiptsView(view) {
@@ -567,6 +569,103 @@ async function receiptDialog(id, reload) {
             h("td", { title: e.error || "" }, statusPillOf(EMAIL_STATUS, e.status)))))))
       : h("p", { class: "muted" }, "עוד לא נשלח מייל."),
     h("div", { class: "actions" }, h("button", { class: "btn ghost", onclick: closeModal }, "סגור"), ...actions));
+}
+
+async function sendingView(view) {
+  const s = await api("/admin/api/paypal/receipt-settings");
+  const editable = can("admin");
+  const draft = {}; // only what was changed is sent
+  let lang = "he";
+  const set = (key, value) => { draft[key] = value; dirty(); };
+
+  const toggle = (key, title, hint) => {
+    const box = h("input", { type: "checkbox", checked: s[key], disabled: !editable });
+    box.addEventListener("change", () => set(key, box.checked));
+    return h("label", { class: "switch" }, box, h("div", {}, h("div", { class: "switch-title" }, title), h("div", { class: "muted" }, hint)));
+  };
+
+  const copy = h("input", { type: "email", dir: "ltr", value: s.copyTo || "", placeholder: "archive@your-business.co.il", disabled: !editable });
+  copy.addEventListener("input", () => set("copyTo", copy.value));
+
+  const subject = h("input", { type: "text", maxlength: String(s.limits.subject), disabled: !editable });
+  const intro = h("textarea", { maxlength: String(s.limits.intro), disabled: !editable });
+  const key = (base) => `${base}${lang === "he" ? "He" : "En"}`;
+  const value = (base) => (key(base) in draft ? draft[key(base)] : s[key(base)]) || "";
+  const fill = () => {
+    subject.value = value("subject");
+    intro.value = value("intro");
+    subject.dir = intro.dir = lang === "he" ? "rtl" : "ltr";
+    subject.placeholder = lang === "he" ? "ברירת מחדל: הקבלה שלך מ-Kabala – {{month}}" : "Default: Your Kabala receipt – {{month}}";
+    intro.placeholder = lang === "he" ? "ברירת מחדל: תודה שבחרת ב-Kabala Pro! מצורפת הקבלה על התשלום." : "Default: Thank you for choosing Kabala Pro! Your receipt is attached.";
+  };
+  subject.addEventListener("input", () => set(key("subject"), subject.value));
+  intro.addEventListener("input", () => set(key("intro"), intro.value));
+  let lastFocus = intro;
+  subject.addEventListener("focus", () => (lastFocus = subject));
+  intro.addEventListener("focus", () => (lastFocus = intro));
+  const chips = h("div", { class: "chips" }, Object.entries(s.variables).map(([name, label]) => h("button", {
+    class: "chip", type: "button", title: label, disabled: !editable,
+    onclick: () => {
+      const el = lastFocus, tag = `{{${name}}}`, at = el.selectionStart ?? el.value.length;
+      el.value = el.value.slice(0, at) + tag + el.value.slice(el.selectionEnd ?? at);
+      el.focus(); el.setSelectionRange(at + tag.length, at + tag.length);
+      el.dispatchEvent(new Event("input"));
+    },
+  }, `${label} {{${name}}}`)));
+  const langSelect = h("select", { "aria-label": "שפת המייל" }, h("option", { value: "he" }, "עברית"), h("option", { value: "en" }, "English"));
+  langSelect.addEventListener("change", () => { lang = langSelect.value; fill(); refreshPreview(); });
+
+  const pv = { subject: h("div", { class: "subject" }), intro: h("div", { class: "intro" }), error: h("div", { class: "field-error", role: "alert" }) };
+  let pvTimer;
+  const refreshPreview = () => {
+    clearTimeout(pvTimer);
+    pvTimer = setTimeout(async () => {
+      try {
+        const p = await api("/admin/api/paypal/receipt-settings/preview", { method: "POST", body: { ...draft, locale: lang } });
+        pv.subject.textContent = p.subject; pv.intro.textContent = p.intro; pv.error.textContent = "";
+      } catch (e) { pv.error.textContent = e.message; }
+    }, 300);
+  };
+
+  const save = h("button", { class: "btn primary", disabled: true, onclick: async () => {
+    try {
+      Object.assign(s, await api("/admin/api/paypal/receipt-settings", { method: "POST", body: draft }));
+      for (const k of Object.keys(draft)) delete draft[k];
+      dirty(); toast("ההגדרות נשמרו. הן חלות מהקבלה הבאה."); meta.textContent = updatedLine();
+    } catch (e) { toast(e.message); pv.error.textContent = e.message; }
+  } }, "שמור");
+  const test = h("button", { class: "btn ghost", disabled: !editable, onclick: async () => {
+    try { const r = await api("/admin/api/paypal/receipt-settings/test", { method: "POST", body: draft }); toast(`מייל בדיקה נשלח אל ${r.to}`); }
+    catch (e) { toast(e.status === 409 && e.message === "no_receipts" ? "אין עדיין קבלה לשלוח כבדיקה" : e.message); }
+  } }, "שלח לי מייל בדיקה");
+  const reset = h("button", { class: "btn link", disabled: !editable, onclick: () => { set(key("subject"), ""); set(key("intro"), ""); fill(); } }, "חזור לנוסח המובנה");
+  function dirty() { save.disabled = !editable || !Object.keys(draft).length; refreshPreview(); }
+  const updatedLine = () => (s.updatedBy ? `עודכן לאחרונה ${dateTime(s.updatedAt)} על ידי ${s.updatedBy}` : "עוד לא שונו הגדרות: פועל לפי ברירת המחדל.");
+  const meta = h("p", { class: "muted" }, updatedLine());
+
+  fill();
+  view.replaceChildren(
+    h("p", { class: "note" }, "כאן קובעים איך קבלות נשלחות ללקוחות אחרי כל תשלום ב-PayPal. שינוי חל מהקבלה הבאה; קבלות שכבר נשלחו לא משתנות."),
+    h("div", { class: "settings-grid" },
+      h("div", { class: "card", }, h("h2", {}, "שליחה"),
+        h("div", { class: "field" },
+          toggle("autoSend", "שליחה אוטומטית ללקוח", "הקבלה נשלחת במייל מיד אחרי התשלום. כבוי: הקבלה נוצרת ומחכה לשליחה ידנית בדף \"קבלות ללקוחות\"."),
+          toggle("autoRetry", "ניסיון חוזר אוטומטי", `קבלה שנכשלה (למשל שרת המייל לא זמין) תישלח שוב עד ${s.retry.rounds} פעמים, שעה בין ניסיון לניסיון.`))),
+      h("div", { class: "card" }, h("h2", {}, "עותק לכל קבלה"),
+        h("div", { class: "field" }, h("label", {}, "כתובת לעותק נסתר (Bcc)"), copy,
+          h("div", { class: "muted" }, "למשל רואה החשבון או תיבת הארכיון של העסק. הלקוח לא רואה את הכתובת הזו. ריק: ללא עותק.")))),
+    h("div", { class: "card" },
+      h("div", { class: "toolbar" }, h("h2", {}, "נוסח המייל"), h("div", { class: "spacer" }), langSelect),
+      h("div", { class: "settings-grid" },
+        h("div", { class: "field" },
+          h("label", {}, "נושא"), subject,
+          h("label", {}, "שורת פתיחה"), intro,
+          h("div", { class: "muted" }, "לחיצה על משתנה מכניסה אותו לשדה. רק המשתנים האלה מותרים:"), chips, reset),
+        h("div", { class: "field" }, h("label", {}, "תצוגה מקדימה (לפי הקבלה האחרונה)"), h("div", { class: "preview" }, pv.subject, pv.intro), pv.error,
+          h("div", { class: "muted" }, "פרטי הקבלה, ה-PDF והקישור להורדה מתווספים למייל אוטומטית.")))),
+    h("div", { class: "toolbar" }, save, test, h("div", { class: "spacer" }), meta),
+    ...(editable ? [] : [h("p", { class: "note" }, "כצופה אפשר לראות את ההגדרות, אבל לא לשנות אותן.")]));
+  refreshPreview();
 }
 
 // ---- boot --------------------------------------------------------------------------------------

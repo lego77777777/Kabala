@@ -14,6 +14,7 @@ import { taxPolicy } from "./receipts/amounts.js";
 import { ReceiptPipeline } from "./receipts/pipeline.js";
 import { ReceiptService } from "./receipts/service.js";
 import { LicenseKeyService } from "./licenses/keys.js";
+import { ReceiptSettingsService } from "./receipts/settings.js";
 import { BillingService } from "./services/billing.js";
 import { TokenService } from "./services/tokens.js";
 import { LinkSigner } from "./storage/signed-links.js";
@@ -31,6 +32,7 @@ export interface Context {
   queue: JobQueue;
   pipeline: ReceiptPipeline;
   keys: LicenseKeyService;
+  receiptSettings: ReceiptSettingsService;
 }
 
 export function paypalFromEnv(env: EnvConfig): PayPalGateway {
@@ -83,6 +85,7 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
   const links = new LinkSigner(linkSecret, env.PUBLIC_URL);
   const queue = await startQueue(database.queue, { attempts: 5, delaySeconds: env.RECEIPT_RETRY_DELAY_SECONDS }, { onError: (e) => log.error({ err: e.message }, "queue error"), schedules: opts.workers !== false });
   const receipts = new ReceiptService({ db: database.db, tax: taxPolicy(env.BUSINESS_TYPE, env.VAT_RATE_PERCENT), provider: env.RECEIPT_PROVIDER });
+  const receiptSettings = new ReceiptSettingsService({ db: database.db });
   const pipeline = new ReceiptPipeline({
     db: database.db,
     receipts,
@@ -95,11 +98,12 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
     accountUrl: `${env.PUBLIC_URL.replace(/\/$/, "")}/account`,
     adminEmail: env.ADMIN_EMAIL ?? null,
     copyTo: env.RECEIPT_COPY_TO ?? null,
+    settings: receiptSettings,
     log,
   });
   if (opts.workers !== false) await pipeline.start();
   const keySecret = env.LICENSE_KEY_SECRET ?? createHash("sha256").update(`license-keys:${env.LICENSE_PRIVATE_KEY}`).digest("hex");
   const keys = new LicenseKeyService({ db: database.db, secret: keySecret });
   const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: env.LICENSE_TTL_DAYS, keys, log });
-  return { env, database, paypal, tokens, billing, mailer, storage, links, queue, pipeline, keys };
+  return { env, database, paypal, tokens, billing, mailer, storage, links, queue, pipeline, keys, receiptSettings };
 }

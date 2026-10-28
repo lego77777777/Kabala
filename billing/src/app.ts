@@ -29,6 +29,7 @@ import type { Db } from "./db/client.js";
 import { isMailbox } from "./email/address.js";
 import type { LicenseKeyService } from "./licenses/keys.js";
 import type { ReceiptPipeline } from "./receipts/pipeline.js";
+import type { ReceiptSettingsService } from "./receipts/settings.js";
 import { pricingConfig } from "./config/pricing.config.js";
 import { BillingError, type BillingService } from "./services/billing.js";
 import type { GoogleVerifier } from "./services/google.js";
@@ -51,7 +52,7 @@ export interface AppDeps {
   /** receipt PDFs and the "send again" action (src/receipts/pipeline.ts) */
   receipts?: { storage: Storage; links: LinkSigner; resend(receiptId: string, userId: string): Promise<boolean> };
   /** read-only API for the admin panel (src/admin/admin-api.ts); off without ADMIN_PANEL_PUBLIC_KEY */
-  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService; receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry">; storage: Storage } };
+  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService; receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry" | "sendTest" | "preview">; storage: Storage; settings?: ReceiptSettingsService } };
   /** license keys: activation in the desktop app, "new key" on the account page */
   keys?: LicenseKeyService;
 }

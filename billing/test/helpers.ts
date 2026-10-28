@@ -7,6 +7,7 @@ import { InternalProvider } from "../src/providers/internal.js";
 import type { ReceiptProvider } from "../src/providers/types.js";
 import { LicenseKeyService } from "../src/licenses/keys.js";
 import { InlineQueue } from "../src/queue/inline.js";
+import { ReceiptSettingsService } from "../src/receipts/settings.js";
 import { taxPolicy, type BusinessType } from "../src/receipts/amounts.js";
 import { ReceiptPipeline } from "../src/receipts/pipeline.js";
 import { ReceiptService } from "../src/receipts/service.js";
@@ -31,8 +32,10 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
   const storage = new MemoryStorage();
   const links = new LinkSigner("test-secret-test-secret-test-secret-1234", "http://localhost:8080");
   const receiptService = new ReceiptService({ db: database.db, tax: taxPolicy(businessType, 18), provider: (opts.provider ?? new InternalProvider()).name, now: () => clock });
+  const receiptSettings = new ReceiptSettingsService({ db: database.db, now: () => clock });
   const pipeline = new ReceiptPipeline({
     db: database.db,
+    settings: receiptSettings,
     receipts: receiptService,
     provider: opts.provider ?? new InternalProvider(),
     storage,
@@ -63,7 +66,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     logger: false,
     receipts: { storage, links, resend: (id, uid) => pipeline.resend(id, uid) },
     keys,
-    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys, receipts: { pipeline, storage } } : undefined,
+    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys, receipts: { pipeline, storage, settings: receiptSettings } } : undefined,
   });
 
   async function login(email = "dana@gmail.com") {
@@ -90,6 +93,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     mailer,
     billing,
     keys,
+    receiptSettings,
     pipeline,
     receipts: receiptService,
     queue,
