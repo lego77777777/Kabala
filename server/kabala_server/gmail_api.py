@@ -5,8 +5,10 @@ automatically from a refresh token that only allows sending (scope gmail.send), 
 
 Setup, once, on your own computer:
   1. Google Cloud Console → enable the Gmail API → OAuth client of type "Desktop app".
-  2. GMAIL_CLIENT_ID=… GMAIL_CLIENT_SECRET=… python -m kabala_server.gmail_api authorize
+  2. python -m kabala_server.gmail_api authorize
+     (the OAuth client from GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET, else the desktop app's ../google_client.json)
      A browser opens, you sign in to the sending Gmail account, and the refresh token is printed.
+     The PayPal billing server reads the same variables (`npm run gmail:authorize`), so one token serves both.
   3. On the server set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN (and MAIL_FROM with that address).
 """
 
@@ -15,12 +17,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import http.server
+import json
 import os
 import secrets
 import sys
 import threading
 import webbrowser
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -34,6 +38,7 @@ SCOPE = "https://www.googleapis.com/auth/gmail.send"
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+GOOGLE_CLIENT_FILE = Path(__file__).resolve().parents[2] / "google_client.json"  # the desktop app's OAuth client
 
 
 class GmailApiError(OSError):
@@ -127,10 +132,18 @@ def authorize(client_id: str, client_secret: str) -> str:
     return exchange_code(client_id, client_secret, got["code"], redirect_uri, verifier)
 
 
+def oauth_client(env: dict[str, str], client_file: Path = GOOGLE_CLIENT_FILE) -> tuple[str, str]:
+    """GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET, else the desktop app's client file (like billing's gmail:authorize)."""
+    if env.get("GMAIL_CLIENT_ID") and env.get("GMAIL_CLIENT_SECRET"):
+        return env["GMAIL_CLIENT_ID"], env["GMAIL_CLIENT_SECRET"]
+    if client_file.exists():
+        installed = json.loads(client_file.read_text(encoding="utf-8"))["installed"]
+        return installed["client_id"], installed["client_secret"]
+    raise SystemExit("set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET (an OAuth client of type Desktop app), or add google_client.json")
+
+
 if __name__ == "__main__":
     if sys.argv[1:] != ["authorize"]:
-        sys.exit("usage: GMAIL_CLIENT_ID=… GMAIL_CLIENT_SECRET=… python -m kabala_server.gmail_api authorize")
-    cid, csecret = os.environ.get("GMAIL_CLIENT_ID", ""), os.environ.get("GMAIL_CLIENT_SECRET", "")
-    if not cid or not csecret:
-        sys.exit("set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET (the OAuth client of type Desktop app)")
-    print("GMAIL_REFRESH_TOKEN=" + authorize(cid, csecret))
+        sys.exit("usage: python -m kabala_server.gmail_api authorize")
+    cid, csecret = oauth_client(dict(os.environ))
+    print(f"GMAIL_CLIENT_ID={cid}\nGMAIL_CLIENT_SECRET=<the client secret>\nGMAIL_REFRESH_TOKEN={authorize(cid, csecret)}")

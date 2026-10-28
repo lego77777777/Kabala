@@ -139,7 +139,8 @@ Instead of `SMTP_URL`, the server can send through the Gmail API (`kabala_server
 
 1. In Google Cloud Console: enable the **Gmail API**, set up the OAuth consent screen, and create an OAuth client of type **Desktop app**.
    - While the consent screen is in "Testing", Google expires refresh tokens after 7 days, so publish it ("In production").
-2. On your own computer: `GMAIL_CLIENT_ID=… GMAIL_CLIENT_SECRET=… python -m kabala_server.gmail_api authorize`. A browser opens; sign in to the sending Gmail account and approve. The command prints `GMAIL_REFRESH_TOKEN=…`.
+2. On your own computer: `python -m kabala_server.gmail_api authorize`. It uses `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` if set, otherwise the desktop app's `google_client.json` at the repository root. A browser opens; sign in to the sending Gmail account and approve. The command prints `GMAIL_REFRESH_TOKEN=…`.
+   - The PayPal billing server reads the same three variables (`npm run gmail:authorize` there does the same), so one refresh token serves both servers.
 3. On the server set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, and `MAIL_FROM` with that Gmail address (or an alias verified in Gmail).
 
 Gmail's daily sending limit applies: about 500 recipients a day for a regular account, 2,000 for Google Workspace. Failed sends are retried by the receipt worker as usual, and the error from Google shows in the panel.

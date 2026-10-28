@@ -93,3 +93,12 @@ def test_partial_gmail_config_is_refused(tmp_path):
     cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "g.db"), gmail_client_id="gid")
     with pytest.raises(RuntimeError, match="GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN"):
         create_app(cfg, lambda t: {}, receipt_worker=False)
+
+
+def test_oauth_client_from_env_or_the_desktop_apps_file(tmp_path):
+    f = tmp_path / "google_client.json"
+    assert gmail_api.oauth_client({"GMAIL_CLIENT_ID": "a", "GMAIL_CLIENT_SECRET": "b"}, f) == ("a", "b")
+    f.write_text('{"installed": {"client_id": "desk.apps.googleusercontent.com", "client_secret": "s"}}')
+    assert gmail_api.oauth_client({}, f) == ("desk.apps.googleusercontent.com", "s")
+    with pytest.raises(SystemExit):
+        gmail_api.oauth_client({}, tmp_path / "missing.json")
