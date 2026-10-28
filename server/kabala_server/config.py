@@ -30,6 +30,10 @@ class Config:
     # admin panel ↔ PayPal billing server (admin_billing.py); both empty = the panel shows Stripe only
     billing_url: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_URL", ""))
     billing_admin_key: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_ADMIN_KEY", ""), repr=False)
+    # sending through the Gmail API instead of SMTP (gmail_api.py); all three set = used for every email
+    gmail_client_id: str = field(default_factory=lambda: os.environ.get("GMAIL_CLIENT_ID", ""))
+    gmail_client_secret: str = field(default_factory=lambda: os.environ.get("GMAIL_CLIENT_SECRET", ""), repr=False)
+    gmail_refresh_token: str = field(default_factory=lambda: os.environ.get("GMAIL_REFRESH_TOKEN", ""), repr=False)
     mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
     # automatic receipts after Stripe payments (receipts.py); the seller is shown on every receipt
@@ -57,6 +61,14 @@ class Config:
             raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
         if len(self.secret) < 32:
             raise RuntimeError("KABALA_SECRET must be at least 32 characters")
+        gmail = {"GMAIL_CLIENT_ID": self.gmail_client_id, "GMAIL_CLIENT_SECRET": self.gmail_client_secret,
+                 "GMAIL_REFRESH_TOKEN": self.gmail_refresh_token}
+        if any(gmail.values()) and not all(gmail.values()):
+            raise RuntimeError(f"Gmail API needs all of: {', '.join(n for n, v in gmail.items() if not v)}")
+
+    @property
+    def gmail_enabled(self) -> bool:
+        return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)
 
     @property
     def secrets(self) -> tuple[str, ...]:

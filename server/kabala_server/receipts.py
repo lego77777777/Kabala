@@ -73,16 +73,22 @@ class ReceiptMailer(Protocol):
     def send_mail(self, mail: Mail) -> None: ...
 
 
+def receipt_message(sender: str, mail: Mail) -> EmailMessage:
+    """Text and HTML versions plus the PDF. No Bcc header: each mailer delivers the hidden copy its own way."""
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = sender, mail.to, mail.subject
+    msg.set_content(mail.text)
+    msg.add_alternative(mail.html, subtype="html")
+    for name, data in mail.attachments:
+        msg.add_attachment(data, maintype="application", subtype="pdf", filename=name)
+    return msg
+
+
 class SmtpReceiptMailer(email_login.SmtpMailer):
     """The sign-in code mailer (TLS always), plus HTML, a hidden copy and a PDF attachment."""
 
     def send_mail(self, mail: Mail) -> None:
-        msg = EmailMessage()
-        msg["From"], msg["To"], msg["Subject"] = self.sender, mail.to, mail.subject
-        msg.set_content(mail.text)
-        msg.add_alternative(mail.html, subtype="html")
-        for name, data in mail.attachments:
-            msg.add_attachment(data, maintype="application", subtype="pdf", filename=name)
+        msg = receipt_message(self.sender, mail)
         server = self._connect()
         with server:
             if self.user:

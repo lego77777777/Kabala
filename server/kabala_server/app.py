@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from kabala_server import admin, email_login, tokens
+from kabala_server import admin, email_login, gmail_api, tokens
 from kabala_server import receipts as receipts_mod
 from kabala_server.config import Config
 from kabala_server.db import Database, User
@@ -90,8 +90,11 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         import stripe
 
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
-    if mailer is None and config.smtp_url:
-        # one SMTP sender for sign-in codes and for receipts (HTML + PDF attachment)
+    if mailer is None and config.gmail_enabled:
+        # one sender for sign-in codes and for receipts (HTML + PDF attachment): the Gmail API, else SMTP
+        mailer = gmail_api.GmailApiMailer(config.gmail_client_id, config.gmail_client_secret, config.gmail_refresh_token,
+                                          config.mail_from)
+    elif mailer is None and config.smtp_url:
         mailer = receipts_mod.SmtpReceiptMailer(config.smtp_url, config.mail_from)
     # automatic receipts after Stripe payments (receipts.py); the worker sends what's due in the background
     receipts = receipts_mod.Receipts(db, config, mailer if hasattr(mailer, "send_mail") else None)

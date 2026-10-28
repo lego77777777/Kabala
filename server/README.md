@@ -43,6 +43,7 @@ Without `SMTP_URL` the endpoints answer 503, and the app falls back to the brows
 | `LATEST_VERSION`, `DOWNLOAD_URL` | For update notifications |
 | `KABALA_DB` | Path to the SQLite file |
 | `SMTP_URL` | For sign-in codes: `smtp://user:password@host:587` (STARTTLS) or `smtps://user:password@host:465`. Encode `@` in the user as `%40`. Gmail works with an app password; also SES, Postmark, Mailgun |
+| `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Send all email (sign-in codes, receipts, alerts) through the Gmail API instead of SMTP; see "Sending through the Gmail API". When set, they take precedence over `SMTP_URL` |
 | `KABALA_OWNER_EMAILS` | Admin panel owners, comma-separated (more admins and roles are managed in the panel) |
 | `KABALA_BILLING_URL` | The PayPal billing server (`../billing`), so the admin panel shows its subscribers and payments |
 | `KABALA_BILLING_ADMIN_KEY` | The panel's Ed25519 private key (from `python -m kabala_server.admin_billing keygen`); its public half goes in billing's `ADMIN_PANEL_PUBLIC_KEY` |
@@ -130,7 +131,18 @@ Every paid Stripe invoice (`invoice.paid`, the first payment and each renewal) b
   - Partials never read files, and line breaks are removed from the subject.
 - **Reliability:** a background worker (`kabala_server/receipts.py`) sends with up to 5 attempts and backoff, then up to 3 hourly automatic retries. After that it alerts `ADMIN_EMAIL`. Each invoice gets at most one receipt, even if Stripe redelivers it.
 - **Numbering:** sequential from `RECEIPT_NUMBER_START`, assigned inside a database transaction, with no gaps or duplicates. **Confirm the numbering range and the document type (receipt vs. tax invoice) with your accountant** before going live.
-- **Setup:** set `SMTP_URL` and the `SELLER_*` variables, and add `invoice.paid` to the Stripe webhook events (see Deployment).
+- **Setup:** set `SMTP_URL` or the Gmail API variables, and the `SELLER_*` variables, and add `invoice.paid` to the Stripe webhook events (see Deployment).
+
+## Sending through the Gmail API
+
+Instead of `SMTP_URL`, the server can send through the Gmail API (`kabala_server/gmail_api.py`): sign-in codes, Stripe receipts with their PDF and the Bcc copy, and admin alerts. It uses OAuth with only the `gmail.send` scope, so the server can send but never read the mailbox, and no Gmail password is stored.
+
+1. In Google Cloud Console: enable the **Gmail API**, set up the OAuth consent screen, and create an OAuth client of type **Desktop app**.
+   - While the consent screen is in "Testing", Google expires refresh tokens after 7 days, so publish it ("In production").
+2. On your own computer: `GMAIL_CLIENT_ID=… GMAIL_CLIENT_SECRET=… python -m kabala_server.gmail_api authorize`. A browser opens; sign in to the sending Gmail account and approve. The command prints `GMAIL_REFRESH_TOKEN=…`.
+3. On the server set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, and `MAIL_FROM` with that Gmail address (or an alias verified in Gmail).
+
+Gmail's daily sending limit applies: about 500 recipients a day for a regular account, 2,000 for Google Workspace. Failed sends are retried by the receipt worker as usual, and the error from Google shows in the panel.
 
 ## Encryption
 
