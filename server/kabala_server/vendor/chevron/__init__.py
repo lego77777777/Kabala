@@ -1,5 +1,5 @@
-from .main import main, cli_main
+# Kabala: the command-line tool (main.py, which reads template files) is not shipped
 from .renderer import render
 from .tokenizer import ChevronError
 
-__all__ = ['main', 'render', 'cli_main', 'ChevronError']
+__all__ = ['render', 'ChevronError']

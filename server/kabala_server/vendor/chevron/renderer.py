@@ -99,24 +99,10 @@ def _get_key(key, scopes, warn=False):
 
 def _get_partial(name, partials_dict, partials_path, partials_ext):
     """Load a partial"""
-    try:
-        # Maybe the partial is in the dictionary
-        return partials_dict[name]
-    except KeyError:
-        # Don't try loading from the file system if the partials_path is None or empty
-        if partials_path is None or partials_path == '': return ''
-
-        # Nope...
-        try:
-            # Maybe it's in the file system
-            path_ext = ('.' + partials_ext if partials_ext else '')
-            partial_path = path.join(partials_path, name + path_ext)
-            with io.open(partial_path, 'r', encoding='utf-8') as partial:
-                return partial.read()
-
-        except IOError:
-            # Alright I give up on you
-            return ''
+    # Kabala: partials come only from partials_dict, never from the file system. The original read
+    # path.join(partials_path, name) with partials_path='.' by default, so a template saying
+    # {{> ../../some/file}} could pull a server file into an email.
+    return partials_dict.get(name, '')
 
 
 #
@@ -125,9 +111,9 @@ def _get_partial(name, partials_dict, partials_path, partials_ext):
 g_token_cache = {}
 
 
-def render(template='', data={}, partials_path='.', partials_ext='mustache',
+def render(template='', data={}, partials_path=None, partials_ext='mustache',
            partials_dict={}, padding='', def_ldel='{{', def_rdel='}}',
-           scopes=None, warn=False):
+           scopes=None, warn=False, escape_html=True):
     """Render a mustache template.
 
     Renders a mustache template with a data scope and partial capability.
@@ -233,7 +219,8 @@ def render(template='', data={}, partials_path='.', partials_ext='mustache',
                 thing = scopes[1]
             if not isinstance(thing, unicode_type):
                 thing = unicode(str(thing), 'utf-8')
-            output += _html_escape(thing)
+            # Kabala: escape_html=False for plain text (a mail subject) or text the caller escapes itself
+            output += _html_escape(thing) if escape_html else thing
 
         # If we're a no html escape tag
         elif tag == 'no escape':
