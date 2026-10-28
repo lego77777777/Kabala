@@ -30,6 +30,10 @@ class BillingUnavailable(Exception):
     pass
 
 
+class BillingNotFound(Exception):
+    pass
+
+
 class BillingClient:
     def __init__(self, base_url: str, private_key_pem: str, http: requests.Session | None = None) -> None:
         u = urlparse(base_url)
@@ -48,12 +52,21 @@ class BillingClient:
         return jwt.encode(claims, self.key, algorithm="EdDSA")
 
     def get(self, path: str, admin_email: str, role: str, params: dict | None = None) -> dict:
+        return self._call("GET", path, admin_email, role, params)
+
+    def post(self, path: str, admin_email: str, role: str) -> dict:
+        return self._call("POST", path, admin_email, role)
+
+    def _call(self, method: str, path: str, admin_email: str, role: str, params: dict | None = None) -> dict:
         query = {k: v for k, v in (params or {}).items() if v not in (None, "")}
         url = f"{self.base}{path}" + (f"?{urlencode(query)}" if query else "")
+        headers = {"Authorization": f"Bearer {self.token(method, path, admin_email, role)}"}
         try:
-            r = self.http.get(url, headers={"Authorization": f"Bearer {self.token('GET', path, admin_email, role)}"}, timeout=10)
+            r = self.http.request(method, url, headers=headers, timeout=10)
         except requests.RequestException as e:
             raise BillingUnavailable("billing server unreachable") from e
+        if r.status_code == 404:
+            raise BillingNotFound(path)
         if r.status_code != 200:
             raise BillingUnavailable(f"billing server answered {r.status_code}")
         return r.json()

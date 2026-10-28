@@ -199,13 +199,16 @@ def test_helpers():
 
 # ---- PayPal billing server ------------------------------------------------------------------------
 
+KEY_ID = "0b9e1c3a-1111-4222-8333-944445555666"
+
+
 class FakeBilling:
     """Plays the billing server: checks the panel's JWT exactly like src/admin/admin-api.ts, then answers."""
 
     def __init__(self, public_key, down=False):
         self.public_key, self.down, self.claims = public_key, down, []
 
-    def get(self, url, headers=None, timeout=None):
+    def request(self, method, url, headers=None, timeout=None):
         import requests
         from types import SimpleNamespace as ns
         from urllib.parse import urlparse
@@ -216,9 +219,16 @@ class FakeBilling:
             raise requests.ConnectionError()
         claims = jwt.decode(headers["Authorization"].removeprefix("Bearer "), self.public_key, algorithms=["EdDSA"],
                             audience="kabala-billing", issuer="kabala-admin")
-        assert claims["htm"] == "GET" and claims["htu"] == urlparse(url).path and claims["exp"] - claims["iat"] == 60
+        assert claims["htm"] == method and claims["htu"] == urlparse(url).path and claims["exp"] - claims["iat"] == 60
         self.claims.append(claims)
-        body = {"subscribers": [{"email": "dana.levi@gmail.com", "status": "active"}], "total": 1, "page": 1, "pages": 1}
+        path = urlparse(url).path
+        if method == "POST" and path.endswith("/revoke"):
+            return ns(status_code=200 if KEY_ID in path else 404, json=lambda: {"ok": True})
+        if path == "/api/admin/keys":
+            body = {"keys": [{"id": KEY_ID, "email": "dana.levi@gmail.com", "hint": "KBL-…-7QX2M", "status": "active"}],
+                    "total": 1, "page": 1, "pages": 1}
+        else:
+            body = {"subscribers": [{"email": "dana.levi@gmail.com", "status": "active"}], "total": 1, "page": 1, "pages": 1}
         return ns(status_code=200, json=lambda: body)
 
 
@@ -266,3 +276,19 @@ def test_billing_url_must_be_https():
     with pytest.raises(RuntimeError):
         BillingClient("http://billing.example.com", keygen()[0])
     BillingClient("http://localhost:8080", keygen()[0])
+
+
+def test_paypal_license_keys_list_and_revoke(tmp_path):
+    env_, fake = paypal_env(tmp_path)
+    owner = sign_in(env_)
+    keys = owner.get("/admin/api/paypal/keys").json()["keys"]
+    assert keys[0]["hint"] == "KBL-…-7QX2M" and keys[0]["email"] == "dana.levi@gmail.com"
+    owner.post("/admin/api/admins", json={"email": "view@kabala.app", "role": "viewer"}, headers=H)
+    v = sign_in(env_, "view@kabala.app")
+    assert v.get("/admin/api/paypal/keys").json()["keys"][0]["email"] == "da***@gmail.com"
+    assert v.post(f"/admin/api/paypal/keys/{KEY_ID}/revoke", headers=H).status_code == 403
+    assert owner.post(f"/admin/api/paypal/keys/{KEY_ID}/revoke", headers=H).json() == {"ok": True}
+    assert fake.claims[-1]["htm"] == "POST" and fake.claims[-1]["htu"].endswith("/revoke")
+    assert owner.post("/admin/api/paypal/keys/../../admins/revoke", headers=H).status_code in (400, 404)
+    assert owner.post("/admin/api/paypal/keys/00000000-0000-4000-8000-000000000000/revoke", headers=H).status_code == 404
+    assert "key_revoked" in [e["action"] for e in owner.get("/admin/api/audit").json()["entries"]]

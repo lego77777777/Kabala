@@ -66,6 +66,8 @@ const Env = z
     S3_SSE: z.enum(["AES256", "none"]).optional(),
     /** HMAC key for expiring PDF links (32+ random characters); derived from the license key if empty */
     RECEIPT_LINK_SECRET: z.string().optional(),
+    /** HMAC + AES key for license keys (32+ random characters); derived from the license signing key if empty */
+    LICENSE_KEY_SECRET: z.string().optional(),
 
     /** email: SMTP_URL (Nodemailer: Mailpit, Gmail, SES, Postmark…) or RESEND_API_KEY; neither = log only */
     SMTP_URL: z.string().optional(),

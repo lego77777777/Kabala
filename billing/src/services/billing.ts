@@ -8,7 +8,8 @@ import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { pricingConfig, type Currency, type Interval, type Limits, type Tier } from "../config/pricing.config.js";
 import type { Db } from "../db/client.js";
 import { payments, plans, receipts, subscriptions, users, webhookEvents } from "../db/schema.js";
-import { paymentFailedMail, type Mailer } from "../email/mailer.js";
+import { licenseKeyMail, paymentFailedMail, type Mailer } from "../email/mailer.js";
+import type { LicenseKeyService } from "../licenses/keys.js";
 import { ReceiptError } from "../receipts/service.js";
 import { PayPalError, type PayPalGateway, type PayPalSubscription, type WebhookHeaders } from "../paypal/gateway.js";
 import { buildPricing, fromMajor, priceKey, toMajor, type PricingResponse } from "../pricing/pricing.js";
@@ -44,6 +45,8 @@ export interface BillingDeps {
   receipts?: ReceiptHooks;
   mailer: Mailer;
   licenseTtlDays: number;
+  /** license keys (src/licenses/keys.ts): issued with the first payment */
+  keys?: LicenseKeyService;
   now?: () => Date;
   log?: { info: (o: object, msg?: string) => void; warn: (o: object, msg?: string) => void; error: (o: object, msg?: string) => void };
 }
@@ -218,6 +221,7 @@ export class BillingService {
     return {
       tier,
       limits,
+      licenseKey: (await this.d.keys?.forOwner(userId)) ?? null,
       subscription: sub && {
         status: sub.status,
         interval: sub.plan.interval,
@@ -418,6 +422,13 @@ export class BillingService {
     // Receipt: created (idempotently) and queued; the PDF and the email follow in the background.
     // A failure here answers 500, so PayPal redelivers; the payment row above is already safe.
     await this.d.receipts?.onPayment(payment!.id);
+    // A license key with the first payment (later payments keep the same key). Idempotent: a redelivered
+    // webhook finds the key already there and sends nothing.
+    const key = await this.d.keys?.issue(sub.userId, sub.id);
+    if (key) {
+      const user = await this.user(sub.userId);
+      if (user) await this.safeMail(async () => void (await this.d.mailer.send(licenseKeyMail(user.email, key))));
+    }
     return "payment:recorded";
   }
 

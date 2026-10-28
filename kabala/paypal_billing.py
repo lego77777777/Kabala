@@ -129,6 +129,18 @@ class PayPalLicenseClient:
         _kr_set(SESSION_USER, data["session"])
         return self._store_license(data["license"])
 
+    def activate_key(self, key: str) -> Plan:
+        """A license key (KBL-…) from the purchase email instead of signing in: same session + signed license."""
+        try:
+            r = self.http.post(f"{self.base}/api/license/activate", json={"key": key.strip()}, timeout=20)
+        except requests.RequestException as e:
+            raise LicenseError("network") from e
+        if r.status_code != 200:
+            raise LicenseError({400: "bad_key", 401: "bad_key", 429: "rate_limited"}.get(r.status_code, "network"))
+        data = r.json()
+        _kr_set(SESSION_USER, data["session"])
+        return self._store_license(data["license"])
+
     def logout(self) -> None:
         for user in (SESSION_USER, LICENSE_USER):
             _kr_set(user, None)

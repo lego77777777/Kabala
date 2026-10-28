@@ -26,7 +26,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from kabala_server import email_login
-from kabala_server.admin_billing import BillingClient, BillingUnavailable
+import re
+
+from kabala_server.admin_billing import BillingClient, BillingNotFound, BillingUnavailable
 from kabala_server.config import Config
 from kabala_server.crypto import box
 from kabala_server.db import ROLES, Database
@@ -309,15 +311,20 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
 
     # ---- PayPal billing server (../billing) ------------------------------------------------
 
-    def paypal(path: str, admin: dict, params: dict | None = None) -> dict:
+    def paypal(path: str, admin: dict, params: dict | None = None, method: str = "GET") -> dict:
         if not billing:
             raise HTTPException(404, "PayPal billing is not connected (KABALA_BILLING_URL, KABALA_BILLING_ADMIN_KEY)")
         try:
-            data = billing.get(path, admin["email"], admin["role"], params)
+            if method == "POST":
+                data = billing.post(path, admin["email"], admin["role"])
+            else:
+                data = billing.get(path, admin["email"], admin["role"], params)
+        except BillingNotFound as e:
+            raise HTTPException(404, "not found") from e
         except BillingUnavailable as e:
             raise HTTPException(502, str(e)) from e
         if admin["role"] == "viewer":  # the billing server masks too; never rely on one side alone
-            for row in data.get("subscribers", []) + data.get("payments", []):
+            for row in data.get("subscribers", []) + data.get("payments", []) + data.get("keys", []):
                 row["email"] = mask(row["email"]) if "***" not in row["email"] else row["email"]
         return data
 
@@ -336,3 +343,15 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
     @app.get("/admin/api/paypal/payments")
     def paypal_payments(page: int = 1, admin: dict = Depends(viewer)) -> dict:
         return paypal("/api/admin/payments", admin, {"page": max(1, page)})
+
+    @app.get("/admin/api/paypal/keys")
+    def paypal_keys(q: str = "", status: str = "", page: int = 1, admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/keys", admin, {"q": q[:100] if admin["role"] != "viewer" else "", "status": status, "page": max(1, page)})
+
+    @app.post("/admin/api/paypal/keys/{key_id}/revoke")
+    def paypal_revoke_key(key_id: str, admin: dict = Depends(admin_)) -> dict:
+        if not re.fullmatch(r"[0-9a-f-]{36}", key_id):
+            raise HTTPException(400, "invalid key id")
+        result = paypal(f"/api/admin/keys/{key_id}/revoke", admin, method="POST")
+        db.audit(admin["email"], "key_revoked", key_id, admin["ip"])
+        return result

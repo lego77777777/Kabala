@@ -13,6 +13,7 @@ import { startQueue, type JobQueue } from "./queue/queue.js";
 import { taxPolicy } from "./receipts/amounts.js";
 import { ReceiptPipeline } from "./receipts/pipeline.js";
 import { ReceiptService } from "./receipts/service.js";
+import { LicenseKeyService } from "./licenses/keys.js";
 import { BillingService } from "./services/billing.js";
 import { TokenService } from "./services/tokens.js";
 import { LinkSigner } from "./storage/signed-links.js";
@@ -29,6 +30,7 @@ export interface Context {
   links: LinkSigner;
   queue: JobQueue;
   pipeline: ReceiptPipeline;
+  keys: LicenseKeyService;
 }
 
 export function paypalFromEnv(env: EnvConfig): PayPalGateway {
@@ -96,6 +98,8 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
     log,
   });
   if (opts.workers !== false) await pipeline.start();
-  const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: env.LICENSE_TTL_DAYS, log });
-  return { env, database, paypal, tokens, billing, mailer, storage, links, queue, pipeline };
+  const keySecret = env.LICENSE_KEY_SECRET ?? createHash("sha256").update(`license-keys:${env.LICENSE_PRIVATE_KEY}`).digest("hex");
+  const keys = new LicenseKeyService({ db: database.db, secret: keySecret });
+  const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: env.LICENSE_TTL_DAYS, keys, log });
+  return { env, database, paypal, tokens, billing, mailer, storage, links, queue, pipeline, keys };
 }

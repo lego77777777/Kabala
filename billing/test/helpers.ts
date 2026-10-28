@@ -5,6 +5,7 @@ import { ConsoleMailer, type Mailer } from "../src/email/mailer.js";
 import type { Seller } from "../src/pdf/receipt-document.js";
 import { InternalProvider } from "../src/providers/internal.js";
 import type { ReceiptProvider } from "../src/providers/types.js";
+import { LicenseKeyService } from "../src/licenses/keys.js";
 import { InlineQueue } from "../src/queue/inline.js";
 import { taxPolicy, type BusinessType } from "../src/receipts/amounts.js";
 import { ReceiptPipeline } from "../src/receipts/pipeline.js";
@@ -45,7 +46,8 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     now: () => clock,
   });
   await pipeline.start();
-  const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: 7, now: () => clock });
+  const keys = new LicenseKeyService({ db: database.db, secret: "test-license-key-secret-0123456789abcdef", now: () => clock });
+  const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: 7, keys, now: () => clock });
   if (opts.sync !== false) await syncPricing(database.db, paypal);
   const app = await buildApp({
     billing,
@@ -60,7 +62,8 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     production: false,
     logger: false,
     receipts: { storage, links, resend: (id, uid) => pipeline.resend(id, uid) },
-    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem } : undefined,
+    keys,
+    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys } : undefined,
   });
 
   async function login(email = "dana@gmail.com") {
@@ -86,6 +89,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     tokens,
     mailer,
     billing,
+    keys,
     pipeline,
     receipts: receiptService,
     queue,

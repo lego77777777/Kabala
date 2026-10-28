@@ -5,6 +5,8 @@
  *   GET /api/admin/stats         counts, revenue this month per currency, signups in the last 30 days
  *   GET /api/admin/subscribers   ?q=&status=&page=   subscriptions with the user and plan
  *   GET /api/admin/payments      ?page=             payments with the user
+ *   GET /api/admin/keys          ?q=&status=&page=   license keys (never the key: only its last group)
+ *   POST /api/admin/keys/:id/revoke                  admin role and up
  *
  * Every request carries a short-lived JWT the panel signs with its Ed25519 key (PyJWT on the Python side);
  * this server holds only the public key (ADMIN_PANEL_PUBLIC_KEY), so it can check requests but never forge one.
@@ -17,6 +19,7 @@ import { importSPKI, jwtVerify } from "jose";
 import { z } from "zod";
 import type { Db } from "../db/client.js";
 import { payments, plans, subscriptions, users } from "../db/schema.js";
+import type { LicenseKeyService } from "../licenses/keys.js";
 import { isEntitled } from "../services/subscription-state.js";
 
 export const ISSUER = "kabala-admin";
@@ -44,7 +47,7 @@ class SeenTokens {
   }
 }
 
-export async function registerAdminApi(app: FastifyInstance, d: { db: Db; publicKeyPem: string; mode: string; now?: () => Date }) {
+export async function registerAdminApi(app: FastifyInstance, d: { db: Db; publicKeyPem: string; mode: string; keys?: LicenseKeyService; now?: () => Date }) {
   const key = await importSPKI(d.publicKeyPem.replace(/\\n/g, "\n"), "EdDSA");
   const now = d.now ?? (() => new Date());
   const seen = new SeenTokens();
@@ -152,5 +155,24 @@ export async function registerAdminApi(app: FastifyInstance, d: { db: Db; public
         status: pay.status, paidAt: pay.paidAt, paypalSaleId: c.role === "viewer" ? null : pay.paypalSaleId,
       })),
     };
+  });
+
+  app.get("/api/admin/keys", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (!d.keys) return reply.code(404).send({ error: "keys_not_configured" });
+    const q = z.object({ q: z.string().max(100).optional(), status: z.enum(["active", "revoked"]).optional(), page: z.coerce.number().int().min(1).default(1) }).parse(req.query);
+    const list = await d.keys.adminList({ q: c.role === "viewer" ? undefined : q.q, status: q.status, page: q.page });
+    return { ...list, keys: list.keys.map((k) => ({ ...k, email: email(c, k.email) })) };
+  });
+
+  app.post("/api/admin/keys/:id/revoke", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role === "viewer") return reply.code(403).send({ error: "forbidden" });
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!d.keys || !(await d.keys.revoke(id, c.sub))) return reply.code(404).send({ error: "not_found" });
+    req.log.info({ keyId: id, by: c.sub }, "license key revoked from the admin panel");
+    return { ok: true };
   });
 }

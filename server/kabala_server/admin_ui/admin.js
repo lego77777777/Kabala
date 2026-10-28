@@ -6,7 +6,7 @@ const ROLE_NAME = { viewer: "צופה", admin: "מנהל", owner: "בעלים" }
 const STATUS_NAME = { active: "פעיל", trialing: "ניסיון", past_due: "בפיגור תשלום", canceled: "בוטל", comp: "Pro ידני" };
 const ACTION_NAME = {
   login: "כניסה", login_failed: "קוד שגוי", logout: "יציאה", comp_on: "נתן Pro ידני", comp_off: "ביטל Pro ידני",
-  export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP",
+  export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP", key_revoked: "ביטל מפתח רישיון",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
 const ROUTES = {
@@ -190,6 +190,18 @@ function route() {
 }
 
 window.addEventListener("hashchange", route);
+
+// Keep the open page in sync: re-read it every 30 seconds while the tab is visible and nobody is typing,
+// so a new user, payment or key shows up without reloading. Filters stay (viewState).
+const LIVE = new Set(["dashboard", "users", "payments", "paypal", "security"]);
+setInterval(() => {
+  const name = location.hash.slice(1) || "dashboard";
+  const busy = $("modal").open || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName);
+  if (!me || document.hidden || busy || !LIVE.has(name) || !ROUTES[name]) return;
+  if (name === "paypal" && !paypalConnected) return;
+  const scroll = window.scrollY;
+  ROUTES[name].render($("view")).then(() => window.scrollTo(0, scroll)).catch(() => {});
+}, 30_000);
 $("menu").addEventListener("click", () => $("sidebar").classList.toggle("open"));
 
 function applyTheme(t) {
@@ -233,8 +245,10 @@ async function dashboard(view) {
       h("div", { class: "chart-axis" }, h("span", {}, date(s.signups[0].day)), h("span", {}, "היום"))));
 }
 
+const viewState = {}; // filters and page per view, kept across the 30-second refresh
+
 async function usersView(view, paidOnly) {
-  const state = { q: "", plan: "", status: "", page: 1 };
+  const state = (viewState[paidOnly ? "payments" : "users"] ??= { q: "", plan: "", status: "", page: 1 });
   const tableBox = h("div");
   const load = async () => {
     const qs = new URLSearchParams({ q: state.q, plan: state.plan, status: state.status, page: state.page, paid: paidOnly });
@@ -253,11 +267,11 @@ async function usersView(view, paidOnly) {
         h("tbody", {}, rows))),
       pager(d.page, d.pages, d.total, (p) => { state.page = p; load(); }));
   };
-  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr" });
+  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr", value: state.q });
   let timer;
   search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value; state.page = 1; load(); }, 250); });
   const select = (key, options) => {
-    const s = h("select", { "aria-label": key }, options.map(([v, t]) => h("option", { value: v }, t)));
+    const s = h("select", { "aria-label": key }, options.map(([v, t]) => h("option", { value: v, selected: state[key] === v }, t)));
     s.addEventListener("change", () => { state[key] = s.value; state.page = 1; load(); });
     return s;
   };
@@ -399,7 +413,8 @@ async function paypalView(view) {
   const st = s.subscriptions;
   const pill = (status) => h("span", { class: `pill ${PAYPAL_PILL[status] || status}` }, PAYPAL_STATUS[status] || status);
 
-  const state = { q: "", status: "", page: 1 };
+  const state = (viewState.paypal ??= { q: "", status: "", page: 1, keysQ: "", keysStatus: "", keysPage: 1 });
+  const keysBox = h("div");
   const loadSubs = async () => {
     const qs = new URLSearchParams({ q: state.q, status: state.status, page: state.page });
     const d = await api(`/admin/api/paypal/subscribers?${qs}`);
@@ -427,10 +442,38 @@ async function paypalView(view) {
       : h("div", { class: "card empty" }, "עוד אין תשלומים."));
   };
 
-  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr" });
+  const loadKeys = async () => {
+    const qs = new URLSearchParams({ q: state.keysQ, status: state.keysStatus, page: state.keysPage });
+    let d;
+    try { d = await api(`/admin/api/paypal/keys?${qs}`); } catch (e) { keysBox.replaceChildren(failed(e)); return; }
+    const revoke = (k) => h("button", {
+      class: "btn sm danger",
+      onclick: async () => {
+        if (!(await confirmBox("לבטל את מפתח הרישיון?", `המפתח ${k.hint} של ${k.email} יפסיק לעבוד מיד. המנוי עצמו לא מתבטל, והמשתמש יכול ליצור מפתח חדש בדף "המנוי שלי".`, "בטל מפתח", true))) return;
+        try { await api(`/admin/api/paypal/keys/${k.id}/revoke`, { method: "POST" }); toast("המפתח בוטל"); loadKeys(); } catch (e) { toast(e.message); }
+      },
+    }, "בטל");
+    keysBox.replaceChildren(d.keys.length
+      ? h("div", {}, h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["מפתח", "מייל", "סטטוס", "הפעלות", "שימוש אחרון", "נוצר", ""].map((t) => h("th", {}, t)))),
+          h("tbody", {}, d.keys.map((k) => h("tr", {},
+            h("td", { dir: "ltr", class: "ltr" }, h("code", {}, k.hint)), h("td", { dir: "ltr", class: "ltr" }, k.email),
+            h("td", {}, k.status === "active" ? h("span", { class: "pill active" }, "פעיל") : h("span", { class: "pill canceled", title: k.revokedBy ? `בוטל על ידי ${k.revokedBy}` : "" }, "בוטל")),
+            h("td", {}, num(k.activations)), h("td", {}, k.lastUsedAt ? ago(k.lastUsedAt) : "אף פעם"), h("td", {}, date(k.createdAt)),
+            h("td", {}, k.status === "active" && can("admin") ? revoke(k) : null)))))),
+        pager(d.page, d.pages, d.total, (p) => { state.keysPage = p; loadKeys(); }))
+      : h("div", { class: "card empty" }, "עוד לא הונפקו מפתחות. מפתח נוצר אוטומטית עם התשלום הראשון של כל מנוי."));
+  };
+
+  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr", value: state.q });
   let timer;
   search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value; state.page = 1; loadSubs(); }, 250); });
-  const select = h("select", { "aria-label": "סטטוס" }, [["", "כל הסטטוסים"], ...Object.entries(PAYPAL_STATUS)].map(([v, t]) => h("option", { value: v }, t)));
+  const select = h("select", { "aria-label": "סטטוס" }, [["", "כל הסטטוסים"], ...Object.entries(PAYPAL_STATUS)].map(([v, t]) => h("option", { value: v, selected: state.status === v }, t)));
+  const keySearch = h("input", { type: "search", placeholder: can("admin") ? "חיפוש מפתח לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr", value: state.keysQ });
+  let keyTimer;
+  keySearch.addEventListener("input", () => { clearTimeout(keyTimer); keyTimer = setTimeout(() => { state.keysQ = keySearch.value; state.keysPage = 1; loadKeys(); }, 250); });
+  const keyStatus = h("select", { "aria-label": "סטטוס מפתח" }, [["", "כל המפתחות"], ["active", "פעילים"], ["revoked", "בוטלו"]].map(([v, t]) => h("option", { value: v, selected: state.keysStatus === v }, t)));
+  keyStatus.addEventListener("change", () => { state.keysStatus = keyStatus.value; state.keysPage = 1; loadKeys(); });
   select.addEventListener("change", () => { state.status = select.value; state.page = 1; loadSubs(); });
 
   view.replaceChildren(
@@ -443,8 +486,11 @@ async function paypalView(view) {
       stat("הכנסות החודש", revenue, `${num(payments)} תשלומים, אחרי החזרים`),
       stat("בוטלו / פגו", num((st.cancelled || 0) + (st.expired || 0)))),
     h("h2", {}, "מנויים"), h("div", { class: "toolbar" }, search, select), subsBox,
-    h("h2", {}, "תשלומים"), paysBox);
-  await Promise.all([loadSubs(), loadPays(1)]);
+    h("h2", {}, "תשלומים"), paysBox,
+    h("h2", {}, "מפתחות רישיון"),
+    h("p", { class: "note" }, "כל קונה מקבל מפתח במייל עם התשלום הראשון. המפתח עצמו לא נשמר בשרת בטקסט גלוי (רק hash ועותק מוצפן שרק בעליו רואה), ולכן כאן מוצגת רק הקבוצה האחרונה שלו."),
+    h("div", { class: "toolbar" }, keySearch, keyStatus), keysBox);
+  await Promise.all([loadSubs(), loadPays(1), loadKeys()]);
 }
 
 // ---- boot --------------------------------------------------------------------------------------

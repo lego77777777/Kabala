@@ -76,3 +76,5 @@ table td .btn { font-size: 13px; }
 footer { margin-top: 48px; color: var(--muted); font-size: 13px; text-align: center; }
 @media (max-width: 520px) { .card { padding: 20px; } .price { font-size: 36px; } }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: 1ms !important; transition: none !important; } }
+
+.license-key { font: 700 20px/1.4 Consolas, "Courier New", monospace; letter-spacing: 1px; background: var(--surface2); padding: 12px 16px; border-radius: 10px; text-align: center; user-select: all; margin: 8px 0; }

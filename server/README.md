@@ -96,7 +96,8 @@ Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/ad
 | admin | Everything a viewer can, plus full emails, CSV export, manual Pro, lifting bans and the audit log |
 | owner | Everything an admin can, plus managing admins |
 
-- **PayPal page:** shows subscribers, payments and this month's revenue from the PayPal billing server.
+- **PayPal page:** shows subscribers, payments, this month's revenue and license keys from the PayPal billing server. For keys it shows who has one, how many times it was activated and when it was last used, with a revoke button for admins. It shows only the last group of each key, never the full key.
+- **Live data:** the open page re-reads its data every 30 seconds, so new users, payments and keys appear without reloading.
   - Each request is a 60-second, single-use JWT for one path, signed by the panel with Ed25519 using [PyJWT](https://github.com/jpadilla/pyjwt), copied into `vendor/jwt/` (changes in its `KABALA_CHANGES.md`).
   - The billing server verifies it with `jose` and holds only the public key.
   - Setup: `python -m kabala_server.admin_billing keygen`, then set `KABALA_BILLING_URL`.

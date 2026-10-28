@@ -44,6 +44,8 @@ export function customRandom(alphabet, defaultSize, getRandom) {
         let i = size
         while (i--) {
           id += alphabet[bytes[i] & mask]
+          // Kabala: wipe each random byte once used, so key material doesn't linger in the shared pool
+          bytes[i] = 0
           if (id.length >= size) return id
         }
       }
@@ -61,6 +63,7 @@ export function customRandom(alphabet, defaultSize, getRandom) {
       while (i--) {
         if (bytes[i] < safeByteCutoff) {
           id += alphabet[bytes[i] % alphabet.length]
+          bytes[i] = 0 // Kabala: see above
           if (id.length >= size) return id
         }
       }

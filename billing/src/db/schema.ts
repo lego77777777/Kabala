@@ -180,6 +180,32 @@ export const emailLogs = pgTable(
   (t) => [index("email_logs_receipt_idx").on(t.receiptId)],
 );
 
+export const licenseKeyStatus = pgEnum("license_key_status", ["active", "revoked"]);
+
+/**
+ * License keys (src/licenses/keys.ts): one active key per user, issued with the first payment.
+ * The key itself is never stored in plain text: key_hash (HMAC-SHA256) finds it on activation, key_encrypted
+ * (AES-256-GCM) lets its owner see it again. The admin panel only ever gets `hint` (the last group).
+ */
+export const licenseKeys = pgTable(
+  "license_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    subscriptionId: uuid("subscription_id").references(() => subscriptions.id),
+    keyHash: text("key_hash").notNull().unique(),
+    keyEncrypted: text("key_encrypted").notNull(),
+    hint: text("hint").notNull(),
+    status: licenseKeyStatus("status").notNull().default("active"),
+    activations: integer("activations").notNull().default(0),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: text("revoked_by"),
+  },
+  (t) => [index("license_keys_user_idx").on(t.userId), uniqueIndex("license_keys_one_active_uq").on(t.userId).where(sql`status = 'active'`)],
+);
+
 /** @deprecated replaced by `receipts`. Kept so older databases still migrate; nothing new is written to it. */
 export const invoices = pgTable("invoices", {
   id: uuid("id").primaryKey().defaultRandom(),

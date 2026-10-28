@@ -105,6 +105,15 @@ export function adminAlertMail(to: string, subject: string, details: string): Ma
   return { to, subject: `[Kabala billing] ${subject}`, text: details, html: `<pre style="font-family:monospace">${details.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!)}</pre>` };
 }
 
+export function licenseKeyMail(to: string, key: string): Mail {
+  return {
+    to,
+    subject: "מפתח הרישיון שלך ל-Kabala Pro",
+    text: `תודה שהצטרפת ל-Kabala Pro!\n\nמפתח הרישיון שלך: ${key}\n\nבתוכנה: מנוי ← "יש לי מפתח רישיון", והדבק אותו. אפשר לראות אותו שוב, או להחליף אותו, בדף "המנוי שלי".\nשמור עליו: מי שיש לו את המפתח יכול להפעיל את המנוי שלך.\n\nYour Kabala Pro license key: ${key}`,
+    html: `<div dir="rtl" style="font-family:Segoe UI,Arial,sans-serif"><h2>תודה שהצטרפת ל-Kabala Pro!</h2><p>מפתח הרישיון שלך:</p><p dir="ltr" style="font:700 20px/1.4 Consolas,monospace;letter-spacing:1px;background:#f1f2f7;padding:12px 16px;border-radius:10px;display:inline-block">${key}</p><p>בתוכנה: <b>מנוי ← "יש לי מפתח רישיון"</b>, והדבק אותו. אפשר לראות אותו שוב, או להחליף אותו, בדף "המנוי שלי".</p><p style="color:#6b6f80">שמור עליו: מי שיש לו את המפתח יכול להפעיל את המנוי שלך.</p></div>`,
+  };
+}
+
 export function paymentFailedMail(to: string, graceUntil: Date): Mail {
   const d = graceUntil.toISOString().slice(0, 10);
   return {

@@ -25,6 +25,26 @@ The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially dep
 - **`.env`:** `npm run setup` and `gmail:authorize` write it owner-only (0600), since it holds the license signing key and the Gmail refresh token.
 - **Forged webhooks:** recorded without their body.
 
+## License keys (`src/licenses/keys.ts`)
+
+Every buyer gets a key like `KBL-8B98Z-25XBR-R6S2E-TGEH8` with their first payment. Later payments keep the same key.
+- **Where they see it:** it arrives by email and is also on the "My subscription" page, with Copy and New key buttons.
+- **In the desktop app:** Subscription → "I have a license key" activates Pro without signing in (`POST /api/license/activate`).
+
+**Generation:** [nanoid](https://github.com/ai/nanoid), copied into `src/vendor/nanoid/` (changes in its `KABALA_CHANGES.md`).
+- 100 random bits over the Crockford alphabet, so 0/O and 1/I can't be confused.
+- Typing is forgiving: lower case and spaces work.
+
+**Storage:** the key is never stored in plain text.
+- `key_hash` (HMAC-SHA256) finds it on activation.
+- `key_encrypted` (AES-256-GCM) lets its owner see it again.
+- The admin panel only gets the last group.
+- Both use keys derived from `LICENSE_KEY_SECRET`, or from the license signing key if that is empty.
+
+**Protection:**
+- Activation allows 10 tries per 10 minutes per IP.
+- "New key" (the user) or "Revoke" (an admin in the panel) stops the old key at once.
+
 ## Admin panel API (`src/admin/admin-api.ts`)
 
 The admin panel at `server/ /admin` reads `GET /api/admin/stats`, `/subscribers` and `/payments` to show PayPal subscribers, payments and revenue. These endpoints are read-only.

@@ -26,6 +26,7 @@ import { z } from "zod";
 import { registerAdminApi } from "./admin/admin-api.js";
 import type { Currency } from "./config/pricing.config.js";
 import type { Db } from "./db/client.js";
+import type { LicenseKeyService } from "./licenses/keys.js";
 import { pricingConfig } from "./config/pricing.config.js";
 import { BillingError, type BillingService } from "./services/billing.js";
 import type { GoogleVerifier } from "./services/google.js";
@@ -48,7 +49,9 @@ export interface AppDeps {
   /** receipt PDFs and the "send again" action (src/receipts/pipeline.ts) */
   receipts?: { storage: Storage; links: LinkSigner; resend(receiptId: string, userId: string): Promise<boolean> };
   /** read-only API for the admin panel (src/admin/admin-api.ts); off without ADMIN_PANEL_PUBLIC_KEY */
-  admin?: { db: Db; publicKeyPem: string };
+  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService };
+  /** license keys: activation in the desktop app, "new key" on the account page */
+  keys?: LicenseKeyService;
 }
 
 const ERROR_STATUS: Record<BillingError["code"], number> = {
@@ -169,6 +172,17 @@ export async function buildApp(d: AppDeps): Promise<FastifyInstance> {
     return { session: await d.tokens.sign("session", { sub: user.id, email: user.email }, 30 * 86_400), license: await d.billing.license(user.id) };
   });
 
+  // License key typed in the desktop app instead of signing in: the same answer as /api/session.
+  // A wrong key is a 401 like a bad token; 10 tries per 10 minutes per IP makes guessing 100 random bits hopeless.
+  app.post("/api/license/activate", { config: { rateLimit: { max: 10, timeWindow: "10 minutes" } } }, async (req, reply) => {
+    const { key } = z.object({ key: z.string().min(10).max(64) }).parse(req.body);
+    const found = d.keys ? await d.keys.activate(key) : null;
+    if (!found) return reply.code(401).send({ error: "invalid_license_key" });
+    const user = await d.billing.user(found.userId);
+    if (!user) return reply.code(401).send({ error: "invalid_license_key" });
+    return { session: await d.tokens.sign("session", { sub: user.id, email: user.email }, 30 * 86_400), license: await d.billing.license(user.id) };
+  });
+
   app.get("/api/license", async (req, reply) => {
     const uid = await userId(req, reply);
     if (!uid) return;
@@ -213,6 +227,15 @@ export async function buildApp(d: AppDeps): Promise<FastifyInstance> {
     const uid = await userId(req, reply, true);
     if (!uid) return;
     await d.billing.cancel(uid);
+    return d.billing.account(uid);
+  });
+
+  // "New key": the old one stops working at once (e.g. it was shared or leaked). Shown once here and emailed.
+  app.post("/api/account/license-key/rotate", { config: { rateLimit: { max: 5, timeWindow: "10 minutes" } } }, async (req, reply) => {
+    const uid = await userId(req, reply, true);
+    if (!uid) return;
+    if (!d.keys || (await d.billing.entitlement(uid)).tier !== "pro") return reply.code(409).send({ error: "no_subscription" });
+    await d.keys.rotate(uid);
     return d.billing.account(uid);
   });
 

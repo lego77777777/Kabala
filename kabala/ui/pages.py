@@ -417,6 +417,19 @@ class BillingPage(QWidget):
             grid.setColumnStretch(i, 1)
         lay.addLayout(grid)
 
+        if plan.managed and not plan.is_pro and b.license_keys_supported:
+            key_card = Card(padding=20, spacing=8)
+            key_card.add(label(t("billing.have_key"), "h2"), label(t("billing.key_hint"), "muted", wrap=True))
+            field = QLineEdit()
+            field.setPlaceholderText("KBL-XXXXX-XXXXX-XXXXX-XXXXX")
+            field.setAccessibleName(t("billing.have_key"))
+            field.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            field.setMaxLength(64)
+            activate = Button(t("billing.activate"), "primary", icon="check", on_click=lambda: field.text().strip() and b.activate_license_key(field.text()))
+            field.returnPressed.connect(activate.click)
+            key_card.lay.addLayout(hbox(field, activate))
+            lay.addWidget(key_card)
+
     def _on_failed(self, code: str) -> None:
         self.error.findChild(QLabel, "AlertText").setText(t(f"billing.errors.{code}"))
         self.error.show()

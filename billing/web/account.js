@@ -54,6 +54,13 @@ function render(acc) {
   $("upgrade").classList.toggle("hidden", acc.tier === "pro");
   $("upgrade").href = `/checkout#t=${encodeURIComponent(token)}`;
 
+  $("license-card").classList.toggle("hidden", !acc.licenseKey);
+  $("license-title").classList.toggle("hidden", !acc.licenseKey);
+  if (acc.licenseKey) {
+    $("license-key").textContent = acc.licenseKey.key;
+    $("license-meta").textContent = `נוצר ב-${date(acc.licenseKey.createdAt)} · הופעל ${acc.licenseKey.activations} פעמים`;
+  }
+
   const receiptRows = acc.receipts.map((r) => {
     const tr = document.createElement("tr");
     for (const c of [date(r.issuedAt), docLabel(r), money(r.amount, r.currency)]) tr.append(Object.assign(document.createElement("td"), { textContent: c }));
@@ -157,3 +164,22 @@ if (!token) {
     $("loading").classList.add("hidden");
   }
 }
+
+$("copy-key").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("license-key").textContent);
+    show($("notice"), "המפתח הועתק.", "ok");
+  } catch {
+    show($("notice"), "לא הצלחנו להעתיק. סמן את המפתח והעתק ידנית.", "warn");
+  }
+});
+
+$("rotate-key").addEventListener("click", async () => {
+  if (!confirm("להחליף את המפתח? המפתח הנוכחי יפסיק לעבוד מיד, וצריך יהיה להזין את החדש בתוכנה.")) return;
+  try {
+    render(await api("/api/account/license-key/rotate", { method: "POST", token }));
+    show($("notice"), "נוצר מפתח חדש. הקודם כבר לא עובד.", "ok");
+  } catch (e) {
+    show($("error"), message(e));
+  }
+});

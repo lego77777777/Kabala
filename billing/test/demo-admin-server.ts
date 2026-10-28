@@ -2,6 +2,7 @@
 // trying the admin panel end to end. Usage: npx tsx test/demo-admin-server.ts <panel_public.pem> <port>
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { licenseKeys } from "../src/db/schema.js";
 import { setup } from "./helpers.js";
 
 const [pemPath, port = "8791"] = process.argv.slice(2);
@@ -21,5 +22,8 @@ for (let i = 0; i < 26; i++) {
   if (r < 0.12) await t.webhook("BILLING.SUBSCRIPTION.PAYMENT.FAILED", { id: sub.id });
   else if (r < 0.25) await t.webhook("BILLING.SUBSCRIPTION.CANCELLED", { id: sub.id });
 }
+// one buyer's "My subscription" page, to see their license key
+const [first] = await t.db.select().from(licenseKeys).limit(1);
+if (first) console.log(`account http://127.0.0.1:${port}/account#t=${await t.tokens.sign("checkout", { sub: first.userId }, 3600)}`);
 await t.app.listen({ port: Number(port), host: "127.0.0.1" });
 console.log(`billing demo on ${port}`);

@@ -98,6 +98,11 @@ class FakeServer:
             raise requests.ConnectionError()
         if url.endswith("/api/session"):
             return Resp(200, {"session": "S1", "license": self.signer.token(self.plan)})
+        if url.endswith("/api/license/activate"):  # the key belongs to a paying user
+            if json["key"] != "KBL-7QX2M-AB12C-DE34F-GH56J":
+                return Resp(401)
+            self.plan = "pro"
+            return Resp(200, {"session": "S1", "license": self.signer.token(self.plan)})
         if url.endswith("/api/links"):
             return Resp(200, {"url": f"https://billing.test/{json['page']}#t=abc"})
         return Resp(404)
@@ -131,6 +136,18 @@ def test_client_flow_upgrade_and_offline(vault):
 
     vault["paypal_license"] = s.token(exp_in=-10)  # …but only until it expires
     assert client.status() == FREE
+
+
+def test_license_key_activates_pro_without_signing_in(vault):
+    from kabala.licensing import LicenseError
+
+    s = Signer()
+    client = PayPalLicenseClient("https://billing.test", FakeServer(s), public_key_pem=s.public_pem)
+    with pytest.raises(LicenseError, match="bad_key"):
+        client.activate_key("KBL-00000-00000-00000-00000")
+    assert client.token is None
+    assert client.activate_key("  KBL-7QX2M-AB12C-DE34F-GH56J ").is_pro
+    assert client.token == "S1" and client.status().is_pro
 
 
 def test_forged_server_response_does_not_grant_pro(vault):

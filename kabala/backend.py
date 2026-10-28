@@ -140,6 +140,26 @@ class Backend(QObject):
         except (AuthError, licensing.LicenseError, Exception) as e:  # noqa: BLE001 - stay on cached/free plan
             log.warning("plan server sign-in failed: %s", e)
 
+    @property
+    def license_keys_supported(self) -> bool:
+        return self.license is not None and hasattr(self.license, "activate_key")
+
+    def activate_license_key(self, key: str) -> None:
+        """A key from the purchase email (PayPal server); result via plan_changed or billing_failed."""
+        if not self.license_keys_supported:
+            self.billing_failed.emit("not_configured")
+            return
+
+        def run() -> None:
+            try:
+                self._set_plan(self.license.activate_key(key))
+            except licensing.LicenseError as e:
+                code = str(e) if str(e) in ("bad_key", "rate_limited") else "network"
+                log.warning("license key activation failed: %s", code)
+                self.billing_failed.emit(code)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def start_checkout(self) -> None:
         self._billing_url(lambda: self.license.checkout_url(), self.open_checkout)
 

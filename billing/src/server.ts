@@ -15,7 +15,8 @@ const app = await buildApp({
   deepLink: env.APP_DEEP_LINK,
   production: env.NODE_ENV === "production",
   receipts: { storage: ctx.storage, links: ctx.links, resend: (id, uid) => ctx.pipeline.resend(id, uid) },
-  admin: env.ADMIN_PANEL_PUBLIC_KEY ? { db: ctx.database.db, publicKeyPem: env.ADMIN_PANEL_PUBLIC_KEY } : undefined,
+  keys: ctx.keys,
+  admin: env.ADMIN_PANEL_PUBLIC_KEY ? { db: ctx.database.db, publicKeyPem: env.ADMIN_PANEL_PUBLIC_KEY, keys: ctx.keys } : undefined,
 });
 
 const close = async () => {
