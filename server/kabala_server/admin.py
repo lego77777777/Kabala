@@ -32,6 +32,7 @@ from kabala_server.admin_billing import BillingClient, BillingNotFound, BillingR
 from kabala_server.config import Config
 from kabala_server.crypto import box
 from kabala_server.db import ROLES, Database
+from kabala_server.receipt_templates import TemplateError
 from kabala_server.shield import active_bans, lift_ban
 from kabala_server.vendor.slowapi.util import client_ip
 
@@ -117,7 +118,8 @@ def _user_out(row: dict, full: bool) -> dict:
 
 
 def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mailer | None, limiter: Any,
-            jails: OrderedDict, clock: Callable[[], float] = time.monotonic, billing: BillingClient | None = None) -> None:
+            jails: OrderedDict, clock: Callable[[], float] = time.monotonic, billing: BillingClient | None = None,
+            receipts: Any = None) -> None:
     sessions = box(config.secrets, "admin-session")
     if billing is None and config.billing_url and config.billing_admin_key:
         billing = BillingClient(config.billing_url, config.billing_admin_key)
@@ -468,3 +470,123 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
         result = paypal_refusal_detail("/api/admin/receipt-settings/test", admin, data)
         db.audit(admin["email"], "receipt_test", admin["email"], admin["ip"])
         return result
+
+    # ---- Stripe receipts (receipts.py, this server): the same shapes as the PayPal ones above -------------
+
+    def stripe_receipts():
+        if receipts is None:
+            raise HTTPException(404, "receipts are not set up")
+        return receipts
+
+    def receipt_out(r: dict, full: bool, last: dict | None = None) -> dict:
+        def recipients(to: str) -> str:
+            return ", ".join(a if full else mask(a) for a in to.split(","))
+        out = {
+            "id": str(r["id"]), "kind": "receipt", "number": str(r["number"]),
+            "email": r["customer_email"] if full else mask(r["customer_email"]),
+            "amountMinor": r["amount_minor"], "currency": r["currency"], "status": r["status"],
+            "issuedAt": r["issued_at"], "sentAt": r["sent_at"], "attempts": r["attempts"],
+            "lastError": r["last_error"] if full else None,
+        }
+        if last is not None:
+            out["lastEmail"] = {"status": last["status"], "trigger": last["trigger"], "to": recipients(last["to_addresses"]),
+                                "at": last["updated_at"]} if last else None
+        return out
+
+    def email_out(e: dict, full: bool) -> dict:
+        return {"status": e["status"], "trigger": e["trigger"], "to": ", ".join(a if full else mask(a) for a in e["to_addresses"].split(",")),
+                "attempts": e["attempts"], "error": e["error"] if full else None, "createdAt": e["created_at"], "updatedAt": e["updated_at"]}
+
+    def receipt_id_int(rid: str) -> int:
+        if not rid.isdigit():
+            raise HTTPException(400, "invalid receipt id")
+        return int(rid)
+
+    @app.get("/admin/api/stripe/receipts")
+    def stripe_receipt_list(q: str = "", status: str = "", page: int = 1, admin: dict = Depends(viewer)) -> dict:
+        rc, full, page = stripe_receipts(), admin["role"] != "viewer", max(1, page)
+        rows, total = rc.list(q[:100] if full else "", status, page)
+        out = []
+        for r in rows:
+            emails = rc.emails(r["id"])
+            out.append(receipt_out(r, full, emails[0] if emails else {}))
+        return {"receipts": out, "total": total, "page": page, "pages": max(1, -(-total // 25))}
+
+    @app.get("/admin/api/stripe/receipts/{rid}")
+    def stripe_receipt(rid: str, admin: dict = Depends(viewer)) -> dict:
+        rc, full = stripe_receipts(), admin["role"] != "viewer"
+        r = rc.get(receipt_id_int(rid))
+        if not r:
+            raise HTTPException(404, "not found")
+        return {**receipt_out(r, full), "emails": [email_out(e, full) for e in rc.emails(r["id"])]}
+
+    @app.get("/admin/api/stripe/receipts/{rid}/pdf")
+    def stripe_receipt_pdf(rid: str, admin: dict = Depends(admin_)) -> Response:
+        rc = stripe_receipts()
+        r = rc.get(receipt_id_int(rid))
+        if not r or not r["pdf"]:
+            raise HTTPException(404, "the PDF isn't ready")
+        db.audit(admin["email"], "receipt_downloaded", f"stripe {r['number']}", admin["ip"])
+        return Response(rc.pdf_bytes(r), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="kabala-receipt-{r["number"]}.pdf"', "Cache-Control": "no-store"})
+
+    @app.post("/admin/api/stripe/receipts/{rid}/send")
+    def stripe_receipt_send(rid: str, body: SendIn, admin: dict = Depends(admin_)) -> dict:
+        to = (body.to or "").strip() or None
+        result = stripe_receipts().admin_send(receipt_id_int(rid), to)
+        if result != "queued":
+            raise HTTPException(404 if result == "not_found" else 409, result)
+        db.audit(admin["email"], "receipt_sent", f"stripe {rid} → {to or 'customer'}", admin["ip"])
+        return {"ok": True}
+
+    @app.post("/admin/api/stripe/receipts/{rid}/retry")
+    def stripe_receipt_retry(rid: str, admin: dict = Depends(admin_)) -> dict:
+        result = stripe_receipts().retry(receipt_id_int(rid))
+        if result != "queued":
+            raise HTTPException(404 if result == "not_found" else 409, result)
+        db.audit(admin["email"], "receipt_retry", f"stripe {rid}", admin["ip"])
+        return {"ok": True}
+
+    def stripe_settings_out(admin: dict) -> dict:
+        rc = stripe_receipts()
+        s = rc.settings()
+        if s["copyTo"] and admin["role"] == "viewer":
+            s["copyTo"] = mask(s["copyTo"])
+        return {**s, **rc.meta()}
+
+    @app.get("/admin/api/stripe/receipt-settings")
+    def stripe_settings(admin: dict = Depends(viewer)) -> dict:
+        return stripe_settings_out(admin)
+
+    @app.post("/admin/api/stripe/receipt-settings")
+    def stripe_save_settings(body: ReceiptSettingsIn, admin: dict = Depends(admin_)) -> dict:
+        data = settings_body(body)
+        data.pop("locale", None)
+        try:
+            stripe_receipts().update_settings(data, admin["email"])
+        except TemplateError as e:
+            raise HTTPException(400, str(e)) from e
+        db.audit(admin["email"], "receipt_settings", "stripe: " + ", ".join(sorted(data)), admin["ip"])
+        return stripe_settings_out(admin)
+
+    @app.post("/admin/api/stripe/receipt-settings/preview")
+    def stripe_preview(body: ReceiptSettingsIn, admin: dict = Depends(viewer)) -> dict:
+        data = settings_body(body)
+        locale = data.pop("locale", None) or "he"
+        try:
+            return stripe_receipts().preview(data, locale)
+        except TemplateError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/admin/api/stripe/receipt-settings/test")
+    def stripe_test(body: ReceiptSettingsIn, admin: dict = Depends(admin_)) -> dict:
+        data = settings_body(body)
+        data.pop("locale", None)
+        try:
+            result = stripe_receipts().send_test(admin["email"], data)
+        except TemplateError as e:
+            raise HTTPException(400, str(e)) from e
+        if result != "queued":
+            raise HTTPException(409, result)
+        db.audit(admin["email"], "receipt_test", f"stripe → {admin['email']}", admin["ip"])
+        return {"ok": True, "to": admin["email"]}

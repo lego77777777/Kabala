@@ -52,17 +52,20 @@ class SmtpMailer:
         self.user, self.password = unquote(u.username or ""), unquote(u.password or "")
         self.sender = sender
 
+    def _connect(self) -> smtplib.SMTP:
+        """An encrypted connection: TLS from the start (smtps), or STARTTLS before anything else (smtp)."""
+        context = ssl.create_default_context()
+        if self.tls:
+            return smtplib.SMTP_SSL(self.host, self.port, timeout=15, context=context)
+        server = smtplib.SMTP(self.host, self.port, timeout=15)
+        server.starttls(context=context)
+        return server
+
     def send(self, to: str, subject: str, text: str) -> None:
         msg = EmailMessage()
         msg["From"], msg["To"], msg["Subject"] = self.sender, to, subject
         msg.set_content(text)
-        context = ssl.create_default_context()
-        if self.tls:
-            server: smtplib.SMTP = smtplib.SMTP_SSL(self.host, self.port, timeout=15, context=context)
-        else:
-            server = smtplib.SMTP(self.host, self.port, timeout=15)
-            server.starttls(context=context)
-        with server:
+        with self._connect() as server:
             if self.user:
                 server.login(self.user, self.password)
             server.send_message(msg)

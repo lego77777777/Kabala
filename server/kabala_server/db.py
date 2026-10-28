@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -37,6 +38,52 @@ CREATE TABLE IF NOT EXISTS admins (
     role TEXT NOT NULL CHECK (role IN ('viewer', 'admin', 'owner')),
     added_by TEXT,
     created_at TEXT NOT NULL
+);
+-- automatic receipts after Stripe payments (receipts.py). The PDF is Fernet-encrypted (it holds personal data).
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY,
+    number INTEGER NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    stripe_invoice_id TEXT NOT NULL UNIQUE,
+    amount_minor INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    plan_interval TEXT,
+    period_start INTEGER,
+    period_end INTEGER,
+    customer_email TEXT NOT NULL,
+    customer_name TEXT,
+    locale TEXT NOT NULL DEFAULT 'he',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'generated', 'sent', 'failed')),
+    pdf TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    retry_rounds INTEGER NOT NULL DEFAULT 0,
+    next_at REAL NOT NULL DEFAULT 0,
+    last_error TEXT,
+    issued_at TEXT NOT NULL,
+    sent_at TEXT
+);
+CREATE TABLE IF NOT EXISTS receipt_emails (
+    id INTEGER PRIMARY KEY,
+    receipt_id INTEGER NOT NULL,
+    trigger TEXT NOT NULL,
+    to_addresses TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_at REAL NOT NULL DEFAULT 0,
+    error TEXT,
+    draft TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS receipt_emails_receipt ON receipt_emails(receipt_id);
+CREATE TABLE IF NOT EXISTS receipt_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    auto_send INTEGER NOT NULL DEFAULT 1,
+    copy_to TEXT,
+    subject_he TEXT, subject_en TEXT, intro_he TEXT, intro_en TEXT,
+    auto_retry INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT,
+    updated_by TEXT
 );
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY,
@@ -124,6 +171,11 @@ class Database:
                 (plan, subscription_id, status, period_end, user_id),
             )
 
+    def forget_event(self, event_id: str) -> None:
+        """Un-records a webhook event that couldn't be handled yet, so Stripe's next delivery is processed."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM stripe_events WHERE id=?", (event_id,))
+
     def first_time_event(self, event_id: str) -> bool:
         """Stripe may deliver a webhook more than once; process each event id only once."""
         with self._lock, self._db:
@@ -175,6 +227,26 @@ class Database:
         """The code was used: no further tries, and the secret is erased (the send counter for the hour is kept)."""
         with self._lock, self._db:
             self._db.execute("UPDATE email_codes SET expires_at=0, secret='' WHERE email=?", (email,))
+
+    # ---- generic access for modules with their own tables (receipts.py) ---------------------
+
+    def run(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
+        with self._lock, self._db:
+            return self._db.execute(sql, args)
+
+    def rows(self, sql: str, args: tuple = ()) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._db.execute(sql, args).fetchall()]
+
+    def one(self, sql: str, args: tuple = ()) -> dict | None:
+        found = self.rows(sql, args)
+        return found[0] if found else None
+
+    @contextmanager
+    def transaction(self):
+        """The connection, locked, inside one transaction (e.g. to take the next receipt number safely)."""
+        with self._lock, self._db:
+            yield self._db
 
     # ---- admin panel ------------------------------------------------------------------
 

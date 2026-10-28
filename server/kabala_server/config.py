@@ -32,6 +32,17 @@ class Config:
     billing_admin_key: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_ADMIN_KEY", ""), repr=False)
     mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
+    # automatic receipts after Stripe payments (receipts.py); the seller is shown on every receipt
+    seller_name: str = field(default_factory=lambda: os.environ.get("SELLER_NAME", "Kabala"))
+    seller_tax_id: str = field(default_factory=lambda: os.environ.get("SELLER_TAX_ID", ""))  # ע.מ. / ח.פ.
+    seller_address: str = field(default_factory=lambda: os.environ.get("SELLER_ADDRESS", ""))
+    seller_email: str = field(default_factory=lambda: os.environ.get("SELLER_EMAIL", ""))
+    business_type: str = field(default_factory=lambda: os.environ.get("BUSINESS_TYPE", "exempt"))  # exempt | licensed
+    vat_rate_percent: float = field(default_factory=lambda: float(os.environ.get("VAT_RATE_PERCENT", "18")))
+    # Its own number range, so Stripe and PayPal receipts never share a number (confirm with your accountant)
+    receipt_number_start: int = field(default_factory=lambda: int(os.environ.get("RECEIPT_NUMBER_START", "500001")))
+    receipt_copy_to: str = field(default_factory=lambda: os.environ.get("RECEIPT_COPY_TO", ""))
+    admin_email: str = field(default_factory=lambda: os.environ.get("ADMIN_EMAIL", ""))  # alerted when a receipt fails
     shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")
     proxy_hops: int = field(default_factory=lambda: int(os.environ.get("KABALA_PROXY_HOPS", "0")))
     allow_ips: frozenset[str] = field(default_factory=lambda: frozenset(

@@ -52,6 +52,12 @@ Without `SMTP_URL` the endpoints answer 503, and the app falls back to the brows
 | `KABALA_ALLOW_IPS` | Comma-separated IPs that skip all limits (e.g. uptime monitoring) |
 | `KABALA_MAX_CONNECTIONS` | Open connections before uvicorn answers 503 (default `200`) |
 | `KABALA_SHIELD` | `0` turns the protection off (not recommended) |
+| `SELLER_NAME`, `SELLER_TAX_ID`, `SELLER_ADDRESS`, `SELLER_EMAIL` | The business details printed on Stripe receipts |
+| `BUSINESS_TYPE` | `exempt` (עוסק פטור, default: "קבלה") or `licensed` (עוסק מורשה: "חשבונית מס/קבלה" with VAT broken out) |
+| `VAT_RATE_PERCENT` | VAT rate for licensed dealers (default `18`) |
+| `RECEIPT_NUMBER_START` | First Stripe receipt number (default `500001`, a range separate from PayPal's) |
+| `RECEIPT_COPY_TO` | Default hidden copy (Bcc) of every receipt, e.g. the accountant; can be changed in the panel |
+| `ADMIN_EMAIL` | Alerted by email when a receipt fails after all retries |
 
 ## Anti-DDoS protection
 
@@ -113,6 +119,19 @@ Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/ad
   - Setup: `python -m kabala_server.admin_billing keygen`, then set `KABALA_BILLING_URL`.
 - **Enforcement:** the server checks the role on every request, so removing an admin takes effect immediately. Every action is recorded in the audit log.
 
+## Automatic receipts for Stripe payments
+
+Every paid Stripe invoice (`invoice.paid`, the first payment and each renewal) becomes one numbered receipt PDF, emailed to the customer automatically. The behaviour matches the PayPal server's receipts, and both are run from the same panel pages with a **Stripe | PayPal** switch.
+
+- **Receipt pages:** "קבלות ללקוחות" lists receipts, shows the emails sent, downloads the PDF, and resends to the customer or to another address. "שליחה אוטומטית" sets auto-send on/off, auto-retry, a Bcc copy, and the email subject and opening line (Hebrew and English) with a live preview and a test email.
+- **PDF:** built with [fpdf2](https://github.com/py-pdf/fpdf2) (LGPL, used as a dependency) with HarfBuzz shaping for Hebrew, in `kabala_server/receipts_pdf.py`. PDFs are stored encrypted (Fernet).
+- **Templates:** [chevron](https://github.com/noahmorrison/chevron) (mustache for Python, MIT), copied into `vendor/chevron/` (changes in its `KABALA_CHANGES.md`).
+  - Only plain `{{name}} {{number}} {{amount}} {{month}} {{plan}} {{business}}` tags are allowed.
+  - Partials never read files, and line breaks are removed from the subject.
+- **Reliability:** a background worker (`kabala_server/receipts.py`) sends with up to 5 attempts and backoff, then up to 3 hourly automatic retries. After that it alerts `ADMIN_EMAIL`. Each invoice gets at most one receipt, even if Stripe redelivers it.
+- **Numbering:** sequential from `RECEIPT_NUMBER_START`, assigned inside a database transaction, with no gaps or duplicates. **Confirm the numbering range and the document type (receipt vs. tax invoice) with your accountant** before going live.
+- **Setup:** set `SMTP_URL` and the `SELLER_*` variables, and add `invoice.paid` to the Stripe webhook events (see Deployment).
+
 ## Encryption
 
 [Fernet](https://github.com/pyca/cryptography) (AES + HMAC) from pyca/cryptography, copied into `kabala_server/vendor/fernet/` (changes in its `KABALA_CHANGES.md`), used through `kabala_server/crypto.py`. Each purpose gets its own key derived from `KABALA_SECRET` with HKDF.
@@ -135,7 +154,7 @@ python -m kabala_server
 1. Deploy the `server/` folder with the `Dockerfile`. Attach a persistent volume at `/data`.
 2. Set the environment variables.
 3. In Stripe → Webhooks, add an endpoint at `https://<server>/api/stripe/webhook` with these events:
-   `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`.
+   `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid` (for automatic receipts).
 4. In the desktop app, set the server address: in a `kabala_server.json` file next to `google_client.json`:
    `{"url": "https://<server>"}`. Without it the app works in "unmanaged" mode, where every feature is open (good for development).
 

@@ -16,8 +16,8 @@ const ROUTES = {
   users: { title: "משתמשים", render: (v) => usersView(v, false) },
   payments: { title: "תשלומים (Stripe)", render: (v) => usersView(v, true) },
   paypal: { title: "PayPal", render: paypalView, paypal: true },
-  receipts: { title: "קבלות ללקוחות", render: receiptsView, paypal: true },
-  sending: { title: "שליחה אוטומטית", render: sendingView, paypal: true },
+  receipts: { title: "קבלות ללקוחות", render: receiptsView },
+  sending: { title: "שליחה אוטומטית", render: sendingView },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
@@ -177,7 +177,7 @@ function start() {
   api("/admin/api/paypal/status").then((s) => {
     paypalConnected = s.connected;
     for (const a of document.querySelectorAll("[data-paypal]")) a.hidden = !s.connected;
-    if (["#paypal", "#receipts", "#sending"].includes(location.hash)) route();
+    if (["#paypal", "#receipts", "#sending"].includes(location.hash)) route(); // the PayPal source appears
   }).catch(() => {});
 }
 
@@ -503,17 +503,33 @@ const EMAIL_STATUS = { queued: ["בתור", ""], sent: ["נשלח", "active"], f
 const TRIGGER = { auto: "אוטומטי אחרי התשלום", resend: "הלקוח ביקש שוב", admin: "נשלח מהפאנל", retry: "ניסיון חוזר", test: "מייל בדיקה" };
 const statusPillOf = (map, s) => h("span", { class: `pill ${(map[s] || [s, ""])[1]}` }, (map[s] || [s])[0]);
 
+/** Stripe (this server) or PayPal (the billing server): the same pages and actions for both. */
+function receiptSource() {
+  if (viewState.source === "paypal" && !paypalConnected) viewState.source = "stripe";
+  return (viewState.source ??= "stripe");
+}
+const sourceBase = () => `/admin/api/${receiptSource()}`;
+const SOURCE_NOTE = { stripe: "תשלומים בכרטיס אשראי דרך Stripe", paypal: "תשלומים דרך PayPal" };
+function sourceSwitch() {
+  const options = [["stripe", "Stripe"], ...(paypalConnected ? [["paypal", "PayPal"]] : [])];
+  if (options.length < 2) return null;
+  return h("div", { class: "toolbar" }, h("span", { class: "muted" }, "מקור:"),
+    options.map(([v, label]) => h("button", { class: `btn sm ${receiptSource() === v ? "primary" : "ghost"}`, "aria-pressed": String(receiptSource() === v),
+      onclick: () => { viewState.source = v; viewState.receipts = undefined; route(); } }, label)));
+}
+
 async function receiptsView(view) {
+  const base = sourceBase();
   const state = (viewState.receipts ??= { q: "", status: "", page: 1 });
   const box = h("div");
   const load = async () => {
     const qs = new URLSearchParams({ q: state.q, status: state.status, page: state.page });
-    const d = await api(`/admin/api/paypal/receipts?${qs}`);
+    const d = await api(`${base}/receipts?${qs}`);
     if (!d.receipts.length) { box.replaceChildren(h("div", { class: "card empty" }, "אין קבלות. קבלה נוצרת ונשלחת אוטומטית אחרי כל תשלום.")); return; }
     box.replaceChildren(
       h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, ["מספר", "לקוח", "סכום", "סטטוס", "הונפקה", "מייל אחרון", ""].map((t) => h("th", {}, t)))),
-        h("tbody", {}, d.receipts.map((r) => h("tr", { class: "click", tabindex: "0", onclick: () => receiptDialog(r.id, load), onkeydown: (e) => e.key === "Enter" && receiptDialog(r.id, load) },
+        h("tbody", {}, d.receipts.map((r) => h("tr", { class: "click", tabindex: "0", onclick: () => receiptDialog(r.id, load, base), onkeydown: (e) => e.key === "Enter" && receiptDialog(r.id, load, base) },
           h("td", {}, `${r.kind === "refund" ? "החזר" : "קבלה"} ${r.number}`), h("td", { dir: "ltr", class: "ltr" }, r.email),
           h("td", {}, money(r.amountMinor, r.currency)), h("td", {}, statusPillOf(RECEIPT_STATUS, r.status)), h("td", {}, dateTime(r.issuedAt)),
           h("td", {}, r.lastEmail ? h("span", {}, statusPillOf(EMAIL_STATUS, r.lastEmail.status), " ", h("span", { class: "muted" }, ago(r.lastEmail.at))) : "—"),
@@ -526,31 +542,32 @@ async function receiptsView(view) {
   const select = h("select", { "aria-label": "סטטוס" }, [["", "כל הקבלות"], ...Object.entries(RECEIPT_STATUS).map(([k, v]) => [k, v[0]])].map(([v, t]) => h("option", { value: v, selected: state.status === v }, t)));
   select.addEventListener("change", () => { state.status = select.value; state.page = 1; load(); });
   view.replaceChildren(
-    h("p", { class: "note" }, "אחרי כל תשלום ב-PayPal נוצרת קבלה (PDF) ונשלחת ללקוח במייל אוטומטית, עם ניסיונות חוזרים. כאן רואים מה נשלח, ואפשר לשלוח שוב ללקוח או לכתובת אחרת. הדף מתעדכן לבד."),
+    ...[sourceSwitch()].filter(Boolean),
+    h("p", { class: "note" }, `${SOURCE_NOTE[receiptSource()]}: אחרי כל תשלום נוצרת קבלה (PDF) ונשלחת ללקוח במייל אוטומטית, עם ניסיונות חוזרים. כאן רואים מה נשלח, ואפשר לשלוח שוב ללקוח או לכתובת אחרת. הדף מתעדכן לבד.`),
     h("div", { class: "toolbar" }, search, select), box);
   await load();
 }
 
-async function receiptDialog(id, reload) {
-  const r = await api(`/admin/api/paypal/receipts/${id}`);
+async function receiptDialog(id, reload, base) {
+  const r = await api(`${base}/receipts/${id}`);
   const actions = [];
   if (can("admin")) {
     if (r.status === "failed") {
       actions.push(h("button", { class: "btn primary", onclick: async () => {
-        try { await api(`/admin/api/paypal/receipts/${id}/retry`, { method: "POST", body: {} }); closeModal(); toast("נשלח לניסיון נוסף"); reload(); } catch (e) { toast(e.message); }
+        try { await api(`${base}/receipts/${id}/retry`, { method: "POST", body: {} }); closeModal(); toast("נשלח לניסיון נוסף"); reload(); } catch (e) { toast(e.message); }
       } }, "נסה שוב"));
     } else if (r.status !== "pending") {
       actions.push(h("button", { class: "btn primary", onclick: async () => {
-        try { await api(`/admin/api/paypal/receipts/${id}/send`, { method: "POST", body: {} }); closeModal(); toast("הקבלה נשלחת ללקוח"); reload(); } catch (e) { toast(e.message); }
+        try { await api(`${base}/receipts/${id}/send`, { method: "POST", body: {} }); closeModal(); toast("הקבלה נשלחת ללקוח"); reload(); } catch (e) { toast(e.message); }
       } }, "שלח שוב ללקוח"));
       const other = h("input", { type: "email", dir: "ltr", placeholder: "accountant@example.com", "aria-label": "כתובת אחרת" });
       actions.push(h("form", { class: "toolbar", onsubmit: async (ev) => {
         ev.preventDefault();
-        try { await api(`/admin/api/paypal/receipts/${id}/send`, { method: "POST", body: { to: other.value } }); closeModal(); toast(`הקבלה נשלחת אל ${other.value}`); reload(); }
+        try { await api(`${base}/receipts/${id}/send`, { method: "POST", body: { to: other.value } }); closeModal(); toast(`הקבלה נשלחת אל ${other.value}`); reload(); }
         catch (e) { toast(e.status === 409 ? "הכתובת לא תקינה" : e.message); }
       } }, other, h("button", { class: "btn ghost", type: "submit" }, "שלח לכתובת אחרת")));
     }
-    if (r.status !== "pending") actions.push(h("a", { class: "btn ghost", href: `/admin/api/paypal/receipts/${id}/pdf`, download: "" }, "⬇ PDF"));
+    if (r.status !== "pending") actions.push(h("a", { class: "btn ghost", href: `${base}/receipts/${id}/pdf`, download: "" }, "⬇ PDF"));
   }
   modal(
     h("h2", {}, `${r.kind === "refund" ? "החזר" : "קבלה"} ${r.number}`),
@@ -572,7 +589,8 @@ async function receiptDialog(id, reload) {
 }
 
 async function sendingView(view) {
-  const s = await api("/admin/api/paypal/receipt-settings");
+  const base = sourceBase();
+  const s = await api(`${base}/receipt-settings`);
   const editable = can("admin");
   const draft = {}; // only what was changed is sent
   let lang = "he";
@@ -621,7 +639,7 @@ async function sendingView(view) {
     clearTimeout(pvTimer);
     pvTimer = setTimeout(async () => {
       try {
-        const p = await api("/admin/api/paypal/receipt-settings/preview", { method: "POST", body: { ...draft, locale: lang } });
+        const p = await api(`${base}/receipt-settings/preview`, { method: "POST", body: { ...draft, locale: lang } });
         pv.subject.textContent = p.subject; pv.intro.textContent = p.intro; pv.error.textContent = "";
       } catch (e) { pv.error.textContent = e.message; }
     }, 300);
@@ -629,13 +647,13 @@ async function sendingView(view) {
 
   const save = h("button", { class: "btn primary", disabled: true, onclick: async () => {
     try {
-      Object.assign(s, await api("/admin/api/paypal/receipt-settings", { method: "POST", body: draft }));
+      Object.assign(s, await api(`${base}/receipt-settings`, { method: "POST", body: draft }));
       for (const k of Object.keys(draft)) delete draft[k];
       dirty(); toast("ההגדרות נשמרו. הן חלות מהקבלה הבאה."); meta.textContent = updatedLine();
     } catch (e) { toast(e.message); pv.error.textContent = e.message; }
   } }, "שמור");
   const test = h("button", { class: "btn ghost", disabled: !editable, onclick: async () => {
-    try { const r = await api("/admin/api/paypal/receipt-settings/test", { method: "POST", body: draft }); toast(`מייל בדיקה נשלח אל ${r.to}`); }
+    try { const r = await api(`${base}/receipt-settings/test`, { method: "POST", body: draft }); toast(`מייל בדיקה נשלח אל ${r.to}`); }
     catch (e) { toast(e.status === 409 && e.message === "no_receipts" ? "אין עדיין קבלה לשלוח כבדיקה" : e.message); }
   } }, "שלח לי מייל בדיקה");
   const reset = h("button", { class: "btn link", disabled: !editable, onclick: () => { set(key("subject"), ""); set(key("intro"), ""); fill(); } }, "חזור לנוסח המובנה");
@@ -645,7 +663,8 @@ async function sendingView(view) {
 
   fill();
   view.replaceChildren(
-    h("p", { class: "note" }, "כאן קובעים איך קבלות נשלחות ללקוחות אחרי כל תשלום ב-PayPal. שינוי חל מהקבלה הבאה; קבלות שכבר נשלחו לא משתנות."),
+    ...[sourceSwitch()].filter(Boolean),
+    h("p", { class: "note" }, `כאן קובעים איך קבלות נשלחות ללקוחות: ${SOURCE_NOTE[receiptSource()]}. לכל מקור הגדרות משלו. שינוי חל מהקבלה הבאה; קבלות שכבר נשלחו לא משתנות.`),
     h("div", { class: "settings-grid" },
       h("div", { class: "card", }, h("h2", {}, "שליחה"),
         h("div", { class: "field" },

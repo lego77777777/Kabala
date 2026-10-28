@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from kabala_server import admin, email_login, tokens
+from kabala_server import receipts as receipts_mod
 from kabala_server.config import Config
 from kabala_server.db import Database, User
 from kabala_server.shield import Shield, ShieldConfig
@@ -80,7 +81,7 @@ def _period_end(sub: dict) -> int | None:
 
 
 def create_app(config: Config | None = None, verify_google: Callable[[str], dict] | None = None, stripe_client: Any = None,
-               mailer: email_login.Mailer | None = None, billing_client: Any = None) -> FastAPI:
+               mailer: email_login.Mailer | None = None, billing_client: Any = None, receipt_worker: bool = True) -> FastAPI:
     config = config or Config()
     config.check()
     db = Database(config.db_path, config.secrets)
@@ -90,9 +91,15 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
 
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
     if mailer is None and config.smtp_url:
-        mailer = email_login.SmtpMailer(config.smtp_url, config.mail_from)
+        # one SMTP sender for sign-in codes and for receipts (HTML + PDF attachment)
+        mailer = receipts_mod.SmtpReceiptMailer(config.smtp_url, config.mail_from)
+    # automatic receipts after Stripe payments (receipts.py); the worker sends what's due in the background
+    receipts = receipts_mod.Receipts(db, config, mailer if hasattr(mailer, "send_mail") else None)
+    if receipt_worker:
+        receipts.start()
 
-    app = FastAPI(title="Kabala API", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Kabala API", docs_url=None, redoc_url=None, on_shutdown=[receipts.stop])
+    app.state.receipts = receipts
 
     # Anti-DDoS: slowapi rate limits per IP (same numbers as ../billing), inside the Shield
     # (bans, body size, concurrency), which is the outermost layer and runs before any route or DB work.
@@ -245,8 +252,15 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
             if user:
                 status = "canceled" if kind == "customer.subscription.deleted" else obj["status"]
                 db.set_subscription(user.id, obj["id"], status, _period_end(obj))
+        elif kind == "invoice.paid":  # every payment, the first and each renewal: a receipt for the customer
+            user = db.by_customer(obj.get("customer") or "") or (db.by_email(obj["customer_email"]) if obj.get("customer_email") else None)
+            if not user:
+                # can arrive before checkout.session.completed links the customer: let Stripe deliver it again
+                db.forget_event(event["id"])
+                raise HTTPException(503, "customer not linked yet")
+            receipts.on_invoice_paid(obj, user.id, obj.get("customer_email") or user.email)
         return {"ok": True}
 
-    admin.install(app, db, config, mailer, limiter, jails, billing=billing_client)
+    admin.install(app, db, config, mailer, limiter, jails, billing=billing_client, receipts=receipts)
 
     return app
