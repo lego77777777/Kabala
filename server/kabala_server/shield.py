@@ -42,6 +42,7 @@ STRIKE_ROUTES: dict[str, tuple[int, ...]] = {
     "/api/checkout": (401,),
     "/api/portal": (401,),
     "/api/stripe/webhook": (400,),
+    "/admin/api/login/verify": (401,),
 }
 
 
@@ -70,11 +71,13 @@ class _Jail:
 
 
 class Shield:
-    def __init__(self, app: ASGIApp, config: ShieldConfig | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, app: ASGIApp, config: ShieldConfig | None = None, clock: Callable[[], float] = time.monotonic,
+                 jails: OrderedDict | None = None) -> None:
         self.app = app
         self.cfg = config or ShieldConfig()
         self.clock = clock
-        self.jails: OrderedDict[str, _Jail] = OrderedDict()
+        # passed in by the app so the admin panel can list and lift bans
+        self.jails: OrderedDict[str, _Jail] = jails if jails is not None else OrderedDict()
         self.inflight: dict[str, int] = {}
 
     def client_ip(self, scope: Scope) -> str:
@@ -175,3 +178,19 @@ class Shield:
                 del self.inflight[ip]
         if too_large and not started:
             await self.reject(send, 413, "request body too large")
+
+
+def active_bans(jails: OrderedDict, clock: Callable[[], float] = time.monotonic) -> list[dict]:
+    """For the admin panel: who is banned right now, for how much longer, and how many times so far."""
+    now = clock()
+    return sorted(({"ip": ip, "seconds_left": math.ceil(j.banned_until - now), "bans": j.bans}
+                   for ip, j in list(jails.items()) if j.banned_until > now), key=lambda b: -b["seconds_left"])
+
+
+def lift_ban(jails: OrderedDict, ip: str) -> bool:
+    jail = jails.get(ip)
+    if not jail or not jail.banned_until:
+        return False
+    jail.banned_until = 0.0
+    jail.strikes.clear()
+    return True

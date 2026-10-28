@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Kabala · ניהול</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <script src="/admin/static/admin.js" defer></script>
+</head>
+<body>
+  <!-- sign-in -->
+  <main id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="brand"><span class="logo">K</span><span>Kabala</span><span class="tag">ניהול</span></div>
+      <h1>כניסה לפאנל הניהול</h1>
+      <p class="muted" id="login-hint">הקלד את כתובת המייל שלך. אם היא מורשית, נשלח אליה קוד כניסה.</p>
+      <form id="login-email">
+        <label for="email">מייל</label>
+        <input id="email" type="email" autocomplete="username" dir="ltr" required>
+        <button class="btn primary" type="submit">שלח קוד</button>
+      </form>
+      <form id="login-code" hidden>
+        <label for="code">קוד מהמייל</label>
+        <input id="code" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="12" required>
+        <button class="btn primary" type="submit">כניסה</button>
+        <button class="btn link" type="button" id="login-back">מייל אחר</button>
+      </form>
+      <p class="error" id="login-error" role="alert" hidden></p>
+    </div>
+  </main>
+
+  <!-- panel -->
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="logo">K</span><span>Kabala</span><span class="tag">ניהול</span></div>
+      <nav>
+        <a href="#dashboard" data-route="dashboard"><span class="ico">▦</span>לוח בקרה</a>
+        <a href="#users" data-route="users"><span class="ico">👥</span>משתמשים</a>
+        <a href="#payments" data-route="payments"><span class="ico">💳</span>תשלומים</a>
+        <a href="#admins" data-route="admins" data-min="owner"><span class="ico">🔑</span>מנהלים והרשאות</a>
+        <a href="#security" data-route="security"><span class="ico">🛡</span>אבטחה</a>
+        <a href="#audit" data-route="audit" data-min="admin"><span class="ico">📜</span>יומן פעולות</a>
+      </nav>
+      <div class="me">
+        <div class="me-email" id="me-email" dir="ltr"></div>
+        <span class="role" id="me-role"></span>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <button class="btn icon menu" id="menu" aria-label="תפריט">☰</button>
+        <h1 id="title"></h1>
+        <div class="spacer"></div>
+        <button class="btn icon" id="theme" aria-label="מצב בהיר/כהה" title="מצב בהיר/כהה">◐</button>
+        <button class="btn ghost" id="logout">יציאה</button>
+      </header>
+      <section id="view" class="view" aria-live="polite"></section>
+    </div>
+  </div>
+
+  <dialog id="modal"><div id="modal-body"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -31,9 +31,31 @@ CREATE TABLE IF NOT EXISTS email_codes (
     window_start REAL NOT NULL,
     sends INTEGER NOT NULL
 );
+-- admin panel (admin.py): who may sign in to /admin, and everything they did there
+CREATE TABLE IF NOT EXISTS admins (
+    email TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('viewer', 'admin', 'owner')),
+    added_by TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_audit (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    ip TEXT
+);
 """
 
-PRO_STATUSES = {"active", "trialing", "past_due"}  # past_due keeps access during Stripe's retry window
+ROLES = ("viewer", "admin", "owner")  # each role can do everything the previous one can
+
+# past_due keeps access during Stripe's retry window; comp = Pro given by hand in the admin panel
+PRO_STATUSES = {"active", "trialing", "past_due", "comp"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -59,6 +81,9 @@ class Database:
             # deleted or overwritten rows (used sign-in secrets) are zeroed on disk, not left in free pages
             self._db.execute("PRAGMA secure_delete = ON")
             self._db.executescript(SCHEMA)
+            columns = {r["name"] for r in self._db.execute("PRAGMA table_info(users)")}
+            if "last_seen_at" not in columns:  # added with the admin panel
+                self._db.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
 
     def _one(self, sql: str, args: tuple) -> User | None:
         with self._lock:
@@ -150,3 +175,101 @@ class Database:
         """The code was used: no further tries, and the secret is erased (the send counter for the hour is kept)."""
         with self._lock, self._db:
             self._db.execute("UPDATE email_codes SET expires_at=0, secret='' WHERE email=?", (email,))
+
+    # ---- admin panel ------------------------------------------------------------------
+
+    def touch_seen(self, user_id: int) -> None:
+        """"Last seen" for the admin panel; written at most once a minute per user."""
+        now = _now()
+        with self._lock, self._db:
+            self._db.execute("UPDATE users SET last_seen_at=? WHERE id=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+                             (now, user_id, now[:17]))
+
+    def user_rows(self, q: str = "", plan: str = "", status: str = "", paid: bool = False,
+                  limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        where, args = [], []
+        if q:
+            where.append("email LIKE ? ESCAPE '\\'")
+            args.append("%" + q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+        if plan in ("free", "pro"):
+            where.append("plan=?")
+            args.append(plan)
+        if status:
+            where.append("subscription_status IS NULL" if status == "none" else "subscription_status=?")
+            args += [] if status == "none" else [status]
+        if paid:  # ever paid through Stripe (a customer exists), whatever the subscription's state now
+            where.append("stripe_customer_id IS NOT NULL")
+        sql_where = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._lock:
+            total = self._db.execute(f"SELECT COUNT(*) FROM users {sql_where}", args).fetchone()[0]
+            rows = self._db.execute(f"SELECT * FROM users {sql_where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                                    [*args, limit, offset]).fetchall()
+        return [dict(r) for r in rows], total
+
+    def user_row(self, user_id: int) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def stats(self, now: datetime | None = None) -> dict:
+        from datetime import timedelta
+
+        now = now or datetime.now(timezone.utc)
+        week = (now - timedelta(days=7)).isoformat(timespec="seconds")
+        month_start = (now - timedelta(days=29)).date().isoformat()
+        with self._lock:
+            one = lambda sql, *a: self._db.execute(sql, a).fetchone()[0]  # noqa: E731
+            data = {
+                "users": one("SELECT COUNT(*) FROM users"),
+                "pro": one("SELECT COUNT(*) FROM users WHERE plan='pro'"),
+                "paying": one("SELECT COUNT(*) FROM users WHERE subscription_status IN ('active', 'trialing', 'past_due')"),
+                "past_due": one("SELECT COUNT(*) FROM users WHERE subscription_status='past_due'"),
+                "comp": one("SELECT COUNT(*) FROM users WHERE subscription_status='comp'"),
+                "new_week": one("SELECT COUNT(*) FROM users WHERE created_at >= ?", week),
+                "active_week": one("SELECT COUNT(*) FROM users WHERE last_seen_at >= ?", week),
+            }
+            by_day = dict(self._db.execute(
+                "SELECT substr(created_at, 1, 10) AS d, COUNT(*) FROM users WHERE created_at >= ? GROUP BY d", (month_start,)).fetchall())
+        data["free"] = data["users"] - data["pro"]
+        data["signups"] = [{"day": (now - timedelta(days=i)).date().isoformat(),
+                            "count": by_day.get((now - timedelta(days=i)).date().isoformat(), 0)} for i in range(29, -1, -1)]
+        return data
+
+    def admin_role(self, email: str) -> str | None:
+        with self._lock:
+            row = self._db.execute("SELECT role FROM admins WHERE email=?", (email.strip().lower(),)).fetchone()
+        return row["role"] if row else None
+
+    def admins(self) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._db.execute("SELECT * FROM admins ORDER BY created_at, email")]
+
+    def set_admin(self, email: str, role: str, added_by: str | None) -> None:
+        assert role in ROLES
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO admins(email, role, added_by, created_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(email) DO UPDATE SET role=excluded.role",
+                (email.strip().lower(), role, added_by, _now()),
+            )
+
+    def ensure_owner(self, email: str) -> None:
+        """Bootstrap from KABALA_OWNER_EMAILS: adds the owner, never demotes or re-adds over a change made in the panel."""
+        with self._lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO admins(email, role, added_by, created_at) VALUES (?, 'owner', 'KABALA_OWNER_EMAILS', ?)",
+                             (email.strip().lower(), _now()))
+
+    def remove_admin(self, email: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM admins WHERE email=?", (email.strip().lower(),))
+
+    def audit(self, actor: str, action: str, target: str | None = None, ip: str | None = None) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO admin_audit(at, actor, action, target, ip) VALUES (?, ?, ?, ?, ?)",
+                             (_now(), actor, action, target, ip))
+
+    def audit_rows(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        with self._lock:
+            total = self._db.execute("SELECT COUNT(*) FROM admin_audit").fetchone()[0]
+            rows = self._db.execute("SELECT * FROM admin_audit ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        return [dict(r) for r in rows], total

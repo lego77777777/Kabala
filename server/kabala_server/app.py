@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import OrderedDict
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from kabala_server import email_login, tokens
+from kabala_server import admin, email_login, tokens
 from kabala_server.config import Config
 from kabala_server.db import Database, User
 from kabala_server.shield import Shield, ShieldConfig
@@ -103,8 +104,9 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIASGIMiddleware)
+    jails: OrderedDict = OrderedDict()  # shared with the admin panel's security page
     app.add_middleware(Shield, config=ShieldConfig(enabled=config.shield_enabled, proxy_hops=config.proxy_hops,
-                                                   allow_ips=config.allow_ips))
+                                                   allow_ips=config.allow_ips), jails=jails)
 
     if config.require_https and config.proxy_hops > 0:
         # TLS ends at the proxy (Render, Fly, Cloudflare…); refuse anything that reached it over plain http,
@@ -181,6 +183,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
 
     @app.get("/api/me")
     def me(user: User = Depends(current_user)) -> dict:
+        db.touch_seen(user.id)  # "last seen" in the admin panel
         return _plan_payload(user)
 
     @app.post("/api/checkout")
@@ -243,5 +246,7 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
                 status = "canceled" if kind == "customer.subscription.deleted" else obj["status"]
                 db.set_subscription(user.id, obj["id"], status, _period_end(obj))
         return {"ok": True}
+
+    admin.install(app, db, config, mailer, limiter, jails)
 
     return app

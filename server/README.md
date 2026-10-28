@@ -43,6 +43,7 @@ Without `SMTP_URL` the endpoints answer 503, and the app falls back to the brows
 | `LATEST_VERSION`, `DOWNLOAD_URL` | For update notifications |
 | `KABALA_DB` | Path to the SQLite file |
 | `SMTP_URL` | For sign-in codes: `smtp://user:password@host:587` (STARTTLS) or `smtps://user:password@host:465`. Encode `@` in the user as `%40`. Gmail works with an app password; also SES, Postmark, Mailgun |
+| `KABALA_OWNER_EMAILS` | Admin panel owners, comma-separated (more admins and roles are managed in the panel) |
 | `MAIL_FROM` | Sender of the codes (default `Kabala <no-reply@kabala.app>`) |
 | `KABALA_PROXY_HOPS` | How many reverse proxies sit in front of the server (Render/Fly/Railway: `1`, plus Cloudflare: `2`). `0` (default) ignores `X-Forwarded-For` |
 | `KABALA_RATE_LIMIT` | Requests per minute per IP across all routes (default `120`) |
@@ -73,6 +74,27 @@ Responses carry `X-RateLimit-*` and `Retry-After`; `/health` is exempt.
 4. **Connection level** (`__main__.py`): uvicorn caps open connections, closes idle keep-alive after 5 seconds (slowloris) and limits header size.
 
 State is in memory and bounded. Only the right-most `KABALA_PROXY_HOPS` entries of `X-Forwarded-For` are trusted. With several workers each one counts separately; volumetric (network-level) floods still need a CDN such as Cloudflare in front.
+
+## Admin panel (`/admin`)
+
+Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/admin-panel-prompt.md`](../docs/admin-panel-prompt.md).
+
+- **Sign-in:** enter your email and you get a code by email. Only addresses in the admin list get a code; the first owners come from `KABALA_OWNER_EMAILS`. The session is an encrypted HttpOnly cookie that lasts 8 hours.
+- **Screens:**
+  - **Dashboard:** users, Pro users, paying users, new and active this week, past-due subscriptions, and a 30-day signup chart.
+  - **Users** and **Payments:** search and filters, a details window with a link to Stripe, manual Pro, and CSV export.
+  - **Admins & roles**
+  - **Security:** banned IPs, with a button to lift a ban.
+  - **Audit log**
+- **Roles:**
+
+| Role | Can |
+|---|---|
+| viewer | Stats and the user list, with masked emails |
+| admin | Everything a viewer can, plus full emails, CSV export, manual Pro, lifting bans and the audit log |
+| owner | Everything an admin can, plus managing admins |
+
+- **Enforcement:** the server checks the role on every request, so removing an admin takes effect immediately. Every action is recorded in the audit log.
 
 ## Encryption
 

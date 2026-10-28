@@ -164,18 +164,22 @@ class _ASGIMiddlewareResponder:
             self.initial_message = message
 
         elif message["type"] == "http.response.body":
-            if self.error_response:
-                self.initial_message["status"] = self.error_response.status_code
+            # Kabala: a streamed response has several body messages; the original sent the start message
+            # (headers) again before each of them, which breaks the response. Send it once, before the first.
+            if self.initial_message:
+                if self.error_response:
+                    self.initial_message["status"] = self.error_response.status_code
 
-            if self.inject_headers:
-                headers = MutableHeaders(raw=self.initial_message["headers"])
-                headers = self.limiter._inject_asgi_headers(
-                    headers, self.request.state.view_rate_limit
-                )
+                if self.inject_headers:
+                    headers = MutableHeaders(raw=self.initial_message["headers"])
+                    headers = self.limiter._inject_asgi_headers(
+                        headers, self.request.state.view_rate_limit
+                    )
 
-            # send the http.response.start message just before the http.response.body one,
-            # now that the headers are updated
-            await self.send(self.initial_message)
+                # send the http.response.start message just before the http.response.body one,
+                # now that the headers are updated
+                await self.send(self.initial_message)
+                self.initial_message = {}
             await self.send(message)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

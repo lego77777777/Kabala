@@ -1,0 +1,197 @@
+import re
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from kabala_server.admin import csv_cell, mask  # noqa: E402
+from kabala_server.app import create_app  # noqa: E402
+from kabala_server.config import Config  # noqa: E402
+
+OWNER = "owner@kabala.app"
+H = {"X-Kabala-Admin": "1"}
+
+
+class FakeMailer:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, to, subject, text):
+        self.sent.append((to, text))
+
+    def code_for(self, to):
+        return re.search(r"\b(\d{6})\b", [t for (a, t) in self.sent if a == to][-1]).group(1)
+
+
+@pytest.fixture
+def env(tmp_path):
+    cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "s.db"), owner_emails=(OWNER,))
+    mailer = FakeMailer()
+    app = create_app(cfg, lambda tok: {"email": tok, "email_verified": True}, mailer=mailer)
+    return app, mailer
+
+
+def client(env):
+    return TestClient(env[0])
+
+
+def sign_in(env, email=OWNER):
+    c = client(env)
+    assert c.post("/admin/api/login/start", json={"email": email}).json() == {"ok": True}
+    r = c.post("/admin/api/login/verify", json={"email": email, "code": env[1].code_for(email)})
+    assert r.status_code == 200, r.text
+    return c
+
+
+def add_users(env, *emails):
+    c = client(env)
+    for e in emails:
+        assert c.post("/api/session", json={"id_token": e}).status_code == 200
+
+
+def test_page_and_static_files_are_served_with_strict_headers(env):
+    c = client(env)
+    r = c.get("/admin")
+    assert r.status_code == 200 and "פאנל הניהול" in r.text
+    assert "script-src 'self'" in r.headers["content-security-policy"] and r.headers["x-frame-options"] == "DENY"
+    assert c.get("/admin/static/admin.js").status_code == 200
+    assert c.get("/admin/static/..%2Fadmin.py").status_code == 404
+
+
+def test_owner_signs_in_with_an_emailed_code(env):
+    c = sign_in(env)
+    assert c.get("/admin/api/me").json() == {"email": OWNER, "role": "owner"}
+    cookie = c.cookies.get("kabala_admin")
+    assert OWNER not in cookie  # encrypted
+    assert "httponly" in c.post("/admin/api/login/verify", json={"email": OWNER, "code": "0"}).headers.get("set-cookie", "httponly")
+
+
+def test_unknown_address_gets_the_same_answer_and_no_email(env):
+    c = client(env)
+    assert c.post("/admin/api/login/start", json={"email": "stranger@example.com"}).json() == {"ok": True}
+    assert env[1].sent == []
+    assert c.post("/admin/api/login/verify", json={"email": "stranger@example.com", "code": "123456"}).status_code == 401
+
+
+def test_a_user_code_does_not_open_the_admin_panel(env):
+    c = client(env)
+    c.post("/api/email/start", json={"email": OWNER})
+    assert c.post("/admin/api/login/verify", json={"email": OWNER, "code": env[1].code_for(OWNER)}).status_code == 401
+
+
+def test_everything_needs_a_session(env):
+    c = client(env)
+    for path in ("/admin/api/me", "/admin/api/stats", "/admin/api/users", "/admin/api/admins", "/admin/api/audit", "/admin/api/users.csv"):
+        assert c.get(path).status_code == 401, path
+
+
+def test_post_without_the_admin_header_is_refused(env):
+    c = sign_in(env)
+    assert c.post("/admin/api/admins", json={"email": "x@y.co", "role": "viewer"}).status_code == 403
+    assert c.post("/admin/api/admins", json={"email": "x@y.co", "role": "viewer"}, headers=H).status_code == 200
+
+
+def test_stats_and_user_list(env):
+    add_users(env, "dana@gmail.com", "yossi@walla.co.il", "noa@outlook.com")
+    c = sign_in(env)
+    s = c.get("/admin/api/stats").json()
+    assert s["users"] == 3 and s["free"] == 3 and s["new_week"] == 3 and len(s["signups"]) == 30 and s["signups"][-1]["count"] == 3
+    d = c.get("/admin/api/users", params={"q": "walla"}).json()
+    assert d["total"] == 1 and d["users"][0]["email"] == "yossi@walla.co.il"
+    assert c.get("/admin/api/users", params={"q": "%"}).json()["total"] == 0  # LIKE wildcards are escaped
+
+
+def test_viewer_sees_masked_emails_and_cannot_change_anything(env):
+    add_users(env, "dana.levi@gmail.com")
+    owner = sign_in(env)
+    owner.post("/admin/api/admins", json={"email": "view@kabala.app", "role": "viewer"}, headers=H)
+    v = sign_in(env, "view@kabala.app")
+    users = v.get("/admin/api/users", params={"q": "dana"}).json()["users"]
+    assert [u["email"] for u in users] == ["da***@gmail.com"]  # and the search was ignored
+    uid = users[0]["id"]
+    assert v.get("/admin/api/users.csv").status_code == 403
+    assert v.post(f"/admin/api/users/{uid}/comp", json={"on": True}, headers=H).status_code == 403
+    assert v.get("/admin/api/admins").status_code == 403
+    assert v.get("/admin/api/audit").status_code == 403
+
+
+def test_admin_can_comp_and_export_but_not_manage_admins(env):
+    add_users(env, "dana@gmail.com", "=cmd|' /C calc'!A0@evil.com")
+    owner = sign_in(env)
+    owner.post("/admin/api/admins", json={"email": "ops@kabala.app", "role": "admin"}, headers=H)
+    a = sign_in(env, "ops@kabala.app")
+    uid = next(u["id"] for u in a.get("/admin/api/users").json()["users"] if u["email"] == "dana@gmail.com")
+    r = a.post(f"/admin/api/users/{uid}/comp", json={"on": True}, headers=H)
+    assert r.json()["plan"] == "pro" and r.json()["status"] == "comp"
+    assert a.post(f"/admin/api/users/{uid}/comp", json={"on": False}, headers=H).json()["plan"] == "free"
+    text = a.get("/admin/api/users.csv").text
+    assert "dana@gmail.com" in text and "\n'=cmd" in text  # formula neutralised
+    assert a.get("/admin/api/admins").status_code == 403
+    assert a.post("/admin/api/admins", json={"email": "x@y.co", "role": "owner"}, headers=H).status_code == 403
+
+
+def test_comp_never_overrides_a_stripe_subscription(tmp_path):
+    import json
+    from types import SimpleNamespace as ns
+
+    class FakeStripe:
+        v1 = ns(subscriptions=ns(retrieve=lambda sid: {"id": sid, "status": "active", "current_period_end": 1900000000}))
+
+        def construct_event(self, payload, sig, secret):
+            return json.loads(payload)
+
+    cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "s.db"), owner_emails=(OWNER,),
+                 stripe_secret_key="sk_test", stripe_price_pro="price", stripe_webhook_secret="whsec")
+    mailer = FakeMailer()
+    app_env = (create_app(cfg, lambda tok: {"email": tok, "email_verified": True}, FakeStripe(), mailer), mailer)
+    add_users(app_env, "payer@gmail.com")
+    owner = sign_in(app_env)
+    uid = owner.get("/admin/api/users").json()["users"][0]["id"]
+    event = {"id": "evt_1", "type": "checkout.session.completed",
+             "data": {"object": {"client_reference_id": str(uid), "customer": "cus_1", "subscription": "sub_1"}}}
+    assert client(app_env).post("/api/stripe/webhook", content=json.dumps(event), headers={"Stripe-Signature": "x"}).status_code == 200
+    assert owner.post(f"/admin/api/users/{uid}/comp", json={"on": False}, headers=H).status_code == 409
+    paid = owner.get("/admin/api/users", params={"paid": True}).json()["users"]
+    assert [(u["email"], u["status"], u["stripe_customer"]) for u in paid] == [("payer@gmail.com", "active", "cus_1")]
+
+
+def test_removed_admin_loses_access_at_once_and_last_owner_stays(env):
+    owner = sign_in(env)
+    owner.post("/admin/api/admins", json={"email": "ops@kabala.app", "role": "admin"}, headers=H)
+    ops = sign_in(env, "ops@kabala.app")
+    assert ops.get("/admin/api/me").status_code == 200
+    owner.post("/admin/api/admins/remove", json={"email": "ops@kabala.app"}, headers=H)
+    assert ops.get("/admin/api/me").status_code == 401
+    assert owner.post("/admin/api/admins/remove", json={"email": OWNER}, headers=H).status_code == 409
+    assert owner.post("/admin/api/admins", json={"email": OWNER, "role": "admin"}, headers=H).status_code == 409
+
+
+def test_everything_is_audited(env):
+    owner = sign_in(env)
+    client(env).post("/admin/api/login/verify", json={"email": OWNER, "code": "000000"})
+    owner.post("/admin/api/admins", json={"email": "ops@kabala.app", "role": "viewer"}, headers=H)
+    owner.get("/admin/api/users.csv")
+    actions = [e["action"] for e in owner.get("/admin/api/audit").json()["entries"]]
+    assert actions[:4] == ["export_csv", "admin_set:viewer", "login_failed", "login"]
+
+
+def test_security_page_lists_and_lifts_bans(env):
+    bad = client(env)
+    for _ in range(10):
+        bad.post("/admin/api/login/verify", json={"email": OWNER, "code": "1"})
+    assert bad.get("/admin").status_code == 403  # banned by the Shield
+    owner_client = TestClient(env[0], client=("10.0.0.9", 1234))
+    owner_client.post("/admin/api/login/start", json={"email": OWNER})
+    owner_client.post("/admin/api/login/verify", json={"email": OWNER, "code": env[1].code_for(OWNER)})
+    bans = owner_client.get("/admin/api/security").json()["bans"]
+    assert [b["ip"] for b in bans] == ["testclient"]
+    assert owner_client.post("/admin/api/security/unban", json={"ip": "testclient"}, headers=H).json()["bans"] == []
+    assert bad.get("/admin").status_code == 200
+
+
+def test_helpers():
+    assert mask("dana.levi@gmail.com") == "da***@gmail.com"
+    assert csv_cell("=1+1") == "'=1+1" and csv_cell("+972") == "'+972" and csv_cell("dana") == "dana" and csv_cell(None) == ""

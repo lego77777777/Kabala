@@ -11,5 +11,6 @@ The first commit that added this folder is the original, unchanged; every change
 | `extension.py` | `slowapi_startup(app)` | The original referenced an undefined `app` |
 | `extension.py` | Decorated routes without a `response` parameter skip header injection | The original raised an exception there when `headers_enabled=True` |
 | `middleware.py` | Relative import | The package lives under `kabala_server.vendor` |
+| `middleware.py` | The response start (headers) is sent once, before the first body chunk | The original re-sent it before every chunk, which crashed streamed responses (e.g. the admin panel's CSV export) |
 
 Needs the `limits` package (MIT, the storage and algorithms behind slowapi and flask-limiter).

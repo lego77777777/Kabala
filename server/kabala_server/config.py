@@ -24,6 +24,9 @@ class Config:
     session_days: int = 30
     # sign-in by email code (kabala_server/email_login.py); off without SMTP_URL
     smtp_url: str = field(default_factory=lambda: os.environ.get("SMTP_URL", ""), repr=False)
+    # admin panel (/admin): addresses that are always owners, comma-separated; more admins are added in the panel
+    owner_emails: tuple[str, ...] = field(default_factory=lambda: tuple(
+        e.strip().lower() for e in os.environ.get("KABALA_OWNER_EMAILS", "").split(",") if e.strip()))
     mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
     shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")
