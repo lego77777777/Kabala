@@ -25,7 +25,7 @@ from .exceptions import (
     PyJWKSetError,
     PyJWTError,
 )
-from .jwks_client import PyJWKClient
+# Kabala: jwks_client (downloads keys over the network) is not shipped; Kabala's keys are configured, never fetched
 from .warnings import InsecureKeyLengthWarning
 
 __version__ = "2.15.1"
@@ -46,7 +46,6 @@ __copyright__ = "Copyright 2015-2026 José Padilla"
 __all__ = [
     "PyJWS",
     "PyJWT",
-    "PyJWKClient",
     "PyJWK",
     "PyJWKSet",
     "decode",

@@ -143,8 +143,9 @@ def get_default_algorithms() -> dict[str, Algorithm]:
     """
     Returns the algorithms that are implemented by the library.
     """
+    # Kabala: no "none" algorithm at all. An unsigned token can never be accepted, even by a caller that
+    # forgets to pass `algorithms=` (the classic alg=none JWT attack).
     default_algorithms: dict[str, Algorithm] = {
-        "none": NoneAlgorithm(),
         "HS256": HMACAlgorithm(HMACAlgorithm.SHA256),
         "HS384": HMACAlgorithm(HMACAlgorithm.SHA384),
         "HS512": HMACAlgorithm(HMACAlgorithm.SHA512),

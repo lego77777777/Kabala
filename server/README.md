@@ -44,6 +44,8 @@ Without `SMTP_URL` the endpoints answer 503, and the app falls back to the brows
 | `KABALA_DB` | Path to the SQLite file |
 | `SMTP_URL` | For sign-in codes: `smtp://user:password@host:587` (STARTTLS) or `smtps://user:password@host:465`. Encode `@` in the user as `%40`. Gmail works with an app password; also SES, Postmark, Mailgun |
 | `KABALA_OWNER_EMAILS` | Admin panel owners, comma-separated (more admins and roles are managed in the panel) |
+| `KABALA_BILLING_URL` | The PayPal billing server (`../billing`), so the admin panel shows its subscribers and payments |
+| `KABALA_BILLING_ADMIN_KEY` | The panel's Ed25519 private key (from `python -m kabala_server.admin_billing keygen`); its public half goes in billing's `ADMIN_PANEL_PUBLIC_KEY` |
 | `MAIL_FROM` | Sender of the codes (default `Kabala <no-reply@kabala.app>`) |
 | `KABALA_PROXY_HOPS` | How many reverse proxies sit in front of the server (Render/Fly/Railway: `1`, plus Cloudflare: `2`). `0` (default) ignores `X-Forwarded-For` |
 | `KABALA_RATE_LIMIT` | Requests per minute per IP across all routes (default `120`) |
@@ -94,6 +96,10 @@ Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/ad
 | admin | Everything a viewer can, plus full emails, CSV export, manual Pro, lifting bans and the audit log |
 | owner | Everything an admin can, plus managing admins |
 
+- **PayPal page:** shows subscribers, payments and this month's revenue from the PayPal billing server.
+  - Each request is a 60-second, single-use JWT for one path, signed by the panel with Ed25519 using [PyJWT](https://github.com/jpadilla/pyjwt), copied into `vendor/jwt/` (changes in its `KABALA_CHANGES.md`).
+  - The billing server verifies it with `jose` and holds only the public key.
+  - Setup: `python -m kabala_server.admin_billing keygen`, then set `KABALA_BILLING_URL`.
 - **Enforcement:** the server checks the role on every request, so removing an admin takes effect immediately. Every action is recorded in the audit log.
 
 ## Encryption

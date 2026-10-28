@@ -32,6 +32,8 @@ const Env = z
     APP_DEEP_LINK: z.string().default("kabala://payment-success"),
     /** Google OAuth client id: the desktop app proves the user's identity with a Google ID token */
     GOOGLE_CLIENT_ID: z.string().optional(),
+    /** Ed25519 public key (PEM) of the admin panel: enables the read-only /api/admin/* API. The panel keeps the private key. */
+    ADMIN_PANEL_PUBLIC_KEY: z.string().optional(),
 
     /** "exempt" (עוסק פטור: receipt, no VAT) or "licensed" (עוסק מורשה / company: tax invoice-receipt with VAT) */
     BUSINESS_TYPE: z.enum(["exempt", "licensed"]).default("exempt"),

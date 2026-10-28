@@ -12,13 +12,15 @@ const ACTION_NAME = {
 const ROUTES = {
   dashboard: { title: "לוח בקרה", render: dashboard },
   users: { title: "משתמשים", render: (v) => usersView(v, false) },
-  payments: { title: "תשלומים", render: (v) => usersView(v, true) },
+  payments: { title: "תשלומים (Stripe)", render: (v) => usersView(v, true) },
+  paypal: { title: "PayPal", render: paypalView, paypal: true },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
 };
 
 let me = null;
+let paypalConnected = false;
 const $ = (id) => document.getElementById(id);
 
 // ---- helpers -----------------------------------------------------------------------------------
@@ -166,14 +168,19 @@ function start() {
   const role = $("me-role");
   role.textContent = ROLE_NAME[me.role];
   role.className = `role ${me.role}`;
-  for (const a of document.querySelectorAll(".sidebar nav a")) a.hidden = a.dataset.min ? !can(a.dataset.min) : false;
+  for (const a of document.querySelectorAll(".sidebar nav a")) a.hidden = a.dataset.min ? !can(a.dataset.min) : a.hasAttribute("data-paypal");
   route();
+  api("/admin/api/paypal/status").then((s) => {
+    paypalConnected = s.connected;
+    document.querySelector("[data-paypal]").hidden = !s.connected;
+    if (location.hash === "#paypal") route();
+  }).catch(() => {});
 }
 
 function route() {
   if (!me) return;
   let name = location.hash.slice(1) || "dashboard";
-  if (!ROUTES[name] || (ROUTES[name].min && !can(ROUTES[name].min))) name = "dashboard";
+  if (!ROUTES[name] || (ROUTES[name].min && !can(ROUTES[name].min)) || (ROUTES[name].paypal && !paypalConnected)) name = "dashboard";
   for (const a of document.querySelectorAll(".sidebar nav a")) a.classList.toggle("active", a.dataset.route === name);
   $("title").textContent = ROUTES[name].title;
   $("sidebar").classList.remove("open");
@@ -376,6 +383,68 @@ async function auditView(view) {
       pager(d.page, d.pages, d.total, load));
   };
   await load(1);
+}
+
+const PAYPAL_STATUS = { pending: "ממתין לאישור", trial: "ניסיון", active: "פעיל", past_due: "בפיגור תשלום", cancelled: "בוטל", expired: "פג תוקף" };
+const PAYPAL_PILL = { trial: "trialing", cancelled: "canceled", expired: "canceled" };
+const money = (minor, cur) => (minor / 100).toLocaleString("he-IL", { style: "currency", currency: cur });
+
+async function paypalView(view) {
+  const s = await api("/admin/api/paypal/stats");
+  const subsBox = h("div"), paysBox = h("div");
+  const stat = (label, value, hint, cls) => h("div", { class: `card stat ${cls || ""}` },
+    h("div", { class: "label" }, label), h("div", { class: "value" }, value), hint ? h("div", { class: "hint" }, hint) : null);
+  const revenue = s.revenueThisMonth.length ? s.revenueThisMonth.map((r) => money(r.netMinor, r.currency)).join(" + ") : money(0, "ILS");
+  const payments = s.revenueThisMonth.reduce((n, r) => n + r.payments, 0);
+  const st = s.subscriptions;
+  const pill = (status) => h("span", { class: `pill ${PAYPAL_PILL[status] || status}` }, PAYPAL_STATUS[status] || status);
+
+  const state = { q: "", status: "", page: 1 };
+  const loadSubs = async () => {
+    const qs = new URLSearchParams({ q: state.q, status: state.status, page: state.page });
+    const d = await api(`/admin/api/paypal/subscribers?${qs}`);
+    subsBox.replaceChildren(d.subscribers.length
+      ? h("div", {}, h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["מייל", "סטטוס", "מסלול", "מחיר", "בתוקף עד", "נרשם"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, d.subscribers.map((x) => h("tr", {},
+            h("td", { dir: "ltr", class: "ltr" }, x.email), h("td", {}, pill(x.status)),
+            h("td", {}, x.interval === "yearly" ? "שנתי" : "חודשי"), h("td", {}, money(x.amountMinor, x.currency)),
+            h("td", {}, date(x.currentPeriodEnd)), h("td", {}, date(x.createdAt))))))),
+        pager(d.page, d.pages, d.total, (p) => { state.page = p; loadSubs(); }))
+      : h("div", { class: "card empty" }, "אין מנויים."));
+  };
+  const loadPays = async (page) => {
+    const d = await api(`/admin/api/paypal/payments?page=${page}`);
+    paysBox.replaceChildren(d.payments.length
+      ? h("div", {}, h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["מייל", "סכום", "הוחזר", "סטטוס", "תאריך"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, d.payments.map((p) => h("tr", {},
+            h("td", { dir: "ltr", class: "ltr" }, p.email), h("td", {}, money(p.amountMinor, p.currency)),
+            h("td", {}, p.refundedMinor ? money(p.refundedMinor, p.currency) : "—"),
+            h("td", {}, h("span", { class: `pill ${p.status === "completed" ? "active" : "canceled"}` }, p.status === "completed" ? "שולם" : p.status === "refunded" ? "הוחזר" : "הוחזר חלקית")),
+            h("td", {}, dateTime(p.paidAt))))))),
+        pager(d.page, d.pages, d.total, loadPays))
+      : h("div", { class: "card empty" }, "עוד אין תשלומים."));
+  };
+
+  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr" });
+  let timer;
+  search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value; state.page = 1; loadSubs(); }, 250); });
+  const select = h("select", { "aria-label": "סטטוס" }, [["", "כל הסטטוסים"], ...Object.entries(PAYPAL_STATUS)].map(([v, t]) => h("option", { value: v }, t)));
+  select.addEventListener("change", () => { state.status = select.value; state.page = 1; loadSubs(); });
+
+  view.replaceChildren(
+    h("p", { class: "note" }, `שרת המנויים של PayPal · מצב ${s.mode === "live" ? "אמיתי (Live)" : "בדיקות (Sandbox)"}. הנתונים לקריאה בלבד; שינויים במנוי נעשים ב-PayPal.`),
+    h("div", { class: "cards" },
+      stat("משתמשים", num(s.users)),
+      stat("עם Pro פעיל", num(s.pro), null, "accent"),
+      stat("מנויים פעילים", num((st.active || 0) + (st.trial || 0)), st.trial ? `מתוכם ${num(st.trial)} בניסיון` : null),
+      stat("בפיגור תשלום", num(st.past_due || 0), "בתקופת חסד", st.past_due ? "warn" : ""),
+      stat("הכנסות החודש", revenue, `${num(payments)} תשלומים, אחרי החזרים`),
+      stat("בוטלו / פגו", num((st.cancelled || 0) + (st.expired || 0)))),
+    h("h2", {}, "מנויים"), h("div", { class: "toolbar" }, search, select), subsBox,
+    h("h2", {}, "תשלומים"), paysBox);
+  await Promise.all([loadSubs(), loadPays(1)]);
 }
 
 // ---- boot --------------------------------------------------------------------------------------

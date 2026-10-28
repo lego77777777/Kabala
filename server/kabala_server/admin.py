@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from kabala_server import email_login
+from kabala_server.admin_billing import BillingClient, BillingUnavailable
 from kabala_server.config import Config
 from kabala_server.crypto import box
 from kabala_server.db import ROLES, Database
@@ -99,8 +100,10 @@ def _user_out(row: dict, full: bool) -> dict:
 
 
 def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mailer | None, limiter: Any,
-            jails: OrderedDict, clock: Callable[[], float] = time.monotonic) -> None:
+            jails: OrderedDict, clock: Callable[[], float] = time.monotonic, billing: BillingClient | None = None) -> None:
     sessions = box(config.secrets, "admin-session")
+    if billing is None and config.billing_url and config.billing_admin_key:
+        billing = BillingClient(config.billing_url, config.billing_admin_key)
     for email in config.owner_emails:
         db.ensure_owner(email)
 
@@ -303,3 +306,33 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
         size, page = 50, max(1, page)
         rows, total = db.audit_rows(size, (page - 1) * size)
         return {"entries": rows, "total": total, "page": page, "pages": max(1, -(-total // size))}
+
+    # ---- PayPal billing server (../billing) ------------------------------------------------
+
+    def paypal(path: str, admin: dict, params: dict | None = None) -> dict:
+        if not billing:
+            raise HTTPException(404, "PayPal billing is not connected (KABALA_BILLING_URL, KABALA_BILLING_ADMIN_KEY)")
+        try:
+            data = billing.get(path, admin["email"], admin["role"], params)
+        except BillingUnavailable as e:
+            raise HTTPException(502, str(e)) from e
+        if admin["role"] == "viewer":  # the billing server masks too; never rely on one side alone
+            for row in data.get("subscribers", []) + data.get("payments", []):
+                row["email"] = mask(row["email"]) if "***" not in row["email"] else row["email"]
+        return data
+
+    @app.get("/admin/api/paypal/status")
+    def paypal_status(admin: dict = Depends(viewer)) -> dict:
+        return {"connected": billing is not None}
+
+    @app.get("/admin/api/paypal/stats")
+    def paypal_stats(admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/stats", admin)
+
+    @app.get("/admin/api/paypal/subscribers")
+    def paypal_subscribers(q: str = "", status: str = "", page: int = 1, admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/subscribers", admin, {"q": q[:100] if admin["role"] != "viewer" else "", "status": status, "page": max(1, page)})
+
+    @app.get("/admin/api/paypal/payments")
+    def paypal_payments(page: int = 1, admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/payments", admin, {"page": max(1, page)})

@@ -18,7 +18,7 @@ import { FakePayPal, VALID_HEADERS } from "./fakes.js";
 
 export const SELLER: Seller = { name: "Kabala", taxId: "123456789", address: "תל אביב", email: "billing@kabala.test", businessType: "exempt" };
 
-export async function setup(opts: { sync?: boolean; paypalClientId?: string; provider?: ReceiptProvider; mailer?: Mailer; businessType?: BusinessType } = {}) {
+export async function setup(opts: { sync?: boolean; paypalClientId?: string; provider?: ReceiptProvider; mailer?: Mailer; businessType?: BusinessType; adminPublicKeyPem?: string } = {}) {
   const database = openDatabase("pglite:memory");
   await database.migrate();
   const paypal = new FakePayPal();
@@ -60,6 +60,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     production: false,
     logger: false,
     receipts: { storage, links, resend: (id, uid) => pipeline.resend(id, uid) },
+    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem } : undefined,
   });
 
   async function login(email = "dana@gmail.com") {

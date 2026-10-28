@@ -25,6 +25,19 @@ The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially dep
 - **`.env`:** `npm run setup` and `gmail:authorize` write it owner-only (0600), since it holds the license signing key and the Gmail refresh token.
 - **Forged webhooks:** recorded without their body.
 
+## Admin panel API (`src/admin/admin-api.ts`)
+
+The admin panel at `server/ /admin` reads `GET /api/admin/stats`, `/subscribers` and `/payments` to show PayPal subscribers, payments and revenue. These endpoints are read-only.
+
+- **When it's on:** only when `ADMIN_PANEL_PUBLIC_KEY` is set (the panel's Ed25519 public key, from `python -m kabala_server.admin_billing keygen`). Without it the endpoints don't exist.
+- **Authentication:** every request is a JWT signed by the panel, checked with `jose`:
+  - issuer and audience
+  - EdDSA only
+  - at most 60 seconds old
+  - bound to the method and path
+  - single-use (`jti`)
+- **Viewers:** a viewer token gets masked emails and no PayPal ids.
+
 ## Single source of truth for prices
 
 Everything is defined in **[`src/config/pricing.config.ts`](src/config/pricing.config.ts)**: Free (50 receipts/month, one account) and Pro at ₪29/month or ₪279/year (about 20% off). USD prices are ready but disabled until you add `"USD"` to `currencies`.

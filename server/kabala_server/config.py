@@ -27,6 +27,9 @@ class Config:
     # admin panel (/admin): addresses that are always owners, comma-separated; more admins are added in the panel
     owner_emails: tuple[str, ...] = field(default_factory=lambda: tuple(
         e.strip().lower() for e in os.environ.get("KABALA_OWNER_EMAILS", "").split(",") if e.strip()))
+    # admin panel ↔ PayPal billing server (admin_billing.py); both empty = the panel shows Stripe only
+    billing_url: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_URL", ""))
+    billing_admin_key: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_ADMIN_KEY", ""), repr=False)
     mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
     # anti-DDoS (kabala_server/shield.py)
     shield_enabled: bool = field(default_factory=lambda: os.environ.get("KABALA_SHIELD", "1") != "0")

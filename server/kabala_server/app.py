@@ -80,7 +80,7 @@ def _period_end(sub: dict) -> int | None:
 
 
 def create_app(config: Config | None = None, verify_google: Callable[[str], dict] | None = None, stripe_client: Any = None,
-               mailer: email_login.Mailer | None = None) -> FastAPI:
+               mailer: email_login.Mailer | None = None, billing_client: Any = None) -> FastAPI:
     config = config or Config()
     config.check()
     db = Database(config.db_path, config.secrets)
@@ -247,6 +247,6 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
                 db.set_subscription(user.id, obj["id"], status, _period_end(obj))
         return {"ok": True}
 
-    admin.install(app, db, config, mailer, limiter, jails)
+    admin.install(app, db, config, mailer, limiter, jails, billing=billing_client)
 
     return app

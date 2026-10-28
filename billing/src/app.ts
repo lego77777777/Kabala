@@ -23,7 +23,9 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
+import { registerAdminApi } from "./admin/admin-api.js";
 import type { Currency } from "./config/pricing.config.js";
+import type { Db } from "./db/client.js";
 import { pricingConfig } from "./config/pricing.config.js";
 import { BillingError, type BillingService } from "./services/billing.js";
 import type { GoogleVerifier } from "./services/google.js";
@@ -45,6 +47,8 @@ export interface AppDeps {
   logger?: boolean;
   /** receipt PDFs and the "send again" action (src/receipts/pipeline.ts) */
   receipts?: { storage: Storage; links: LinkSigner; resend(receiptId: string, userId: string): Promise<boolean> };
+  /** read-only API for the admin panel (src/admin/admin-api.ts); off without ADMIN_PANEL_PUBLIC_KEY */
+  admin?: { db: Db; publicKeyPem: string };
 }
 
 const ERROR_STATUS: Record<BillingError["code"], number> = {
@@ -261,6 +265,8 @@ export async function buildApp(d: AppDeps): Promise<FastifyInstance> {
     if (!r) return reply.code(404).send({ error: "not_found" });
     return sendPdf(reply, r);
   });
+
+  if (d.admin) await registerAdminApi(app, { ...d.admin, mode: d.billing.mode });
 
   // ---- PayPal webhooks ----------------------------------------------------------------------------------
 

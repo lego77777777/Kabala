@@ -195,3 +195,74 @@ def test_security_page_lists_and_lifts_bans(env):
 def test_helpers():
     assert mask("dana.levi@gmail.com") == "da***@gmail.com"
     assert csv_cell("=1+1") == "'=1+1" and csv_cell("+972") == "'+972" and csv_cell("dana") == "dana" and csv_cell(None) == ""
+
+
+# ---- PayPal billing server ------------------------------------------------------------------------
+
+class FakeBilling:
+    """Plays the billing server: checks the panel's JWT exactly like src/admin/admin-api.ts, then answers."""
+
+    def __init__(self, public_key, down=False):
+        self.public_key, self.down, self.claims = public_key, down, []
+
+    def get(self, url, headers=None, timeout=None):
+        import requests
+        from types import SimpleNamespace as ns
+        from urllib.parse import urlparse
+
+        from kabala_server.vendor import jwt
+
+        if self.down:
+            raise requests.ConnectionError()
+        claims = jwt.decode(headers["Authorization"].removeprefix("Bearer "), self.public_key, algorithms=["EdDSA"],
+                            audience="kabala-billing", issuer="kabala-admin")
+        assert claims["htm"] == "GET" and claims["htu"] == urlparse(url).path and claims["exp"] - claims["iat"] == 60
+        self.claims.append(claims)
+        body = {"subscribers": [{"email": "dana.levi@gmail.com", "status": "active"}], "total": 1, "page": 1, "pages": 1}
+        return ns(status_code=200, json=lambda: body)
+
+
+def paypal_env(tmp_path, down=False):
+    from kabala_server.admin_billing import BillingClient, keygen
+
+    private, public = keygen()
+    from cryptography.hazmat.primitives import serialization
+
+    fake = FakeBilling(serialization.load_pem_public_key(public.encode()), down)
+    client_ = BillingClient("https://billing.kabala.test", private, http=fake)
+    cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "s.db"), owner_emails=(OWNER,))
+    mailer = FakeMailer()
+    return (create_app(cfg, lambda tok: {}, mailer=mailer, billing_client=client_), mailer), fake
+
+
+def test_paypal_requests_are_signed_per_admin_and_role(tmp_path):
+    env_, fake = paypal_env(tmp_path)
+    owner = sign_in(env_)
+    assert owner.get("/admin/api/paypal/status").json() == {"connected": True}
+    subs = owner.get("/admin/api/paypal/subscribers", params={"q": "dana"}).json()["subscribers"]
+    assert subs[0]["email"] == "dana.levi@gmail.com"
+    assert fake.claims[-1]["sub"] == OWNER and fake.claims[-1]["role"] == "owner"
+    assert len({c["jti"] for c in fake.claims}) == len(fake.claims)
+
+
+def test_paypal_viewer_gets_masked_emails_even_if_billing_does_not_mask(tmp_path):
+    env_, fake = paypal_env(tmp_path)
+    sign_in(env_).post("/admin/api/admins", json={"email": "view@kabala.app", "role": "viewer"}, headers=H)
+    v = sign_in(env_, "view@kabala.app")
+    assert v.get("/admin/api/paypal/subscribers").json()["subscribers"][0]["email"] == "da***@gmail.com"
+    assert fake.claims[-1]["role"] == "viewer"
+
+
+def test_paypal_not_connected_or_down(tmp_path, env):
+    assert sign_in(env).get("/admin/api/paypal/status").json() == {"connected": False}
+    assert sign_in(env).get("/admin/api/paypal/stats").status_code == 404
+    env_, _ = paypal_env(tmp_path, down=True)
+    assert sign_in(env_).get("/admin/api/paypal/stats").status_code == 502
+
+
+def test_billing_url_must_be_https():
+    from kabala_server.admin_billing import BillingClient, keygen
+
+    with pytest.raises(RuntimeError):
+        BillingClient("http://billing.example.com", keygen()[0])
+    BillingClient("http://localhost:8080", keygen()[0])
