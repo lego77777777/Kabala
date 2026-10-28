@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from kabala_server import email_login
 import re
 
-from kabala_server.admin_billing import BillingClient, BillingNotFound, BillingUnavailable
+from kabala_server.admin_billing import BillingClient, BillingNotFound, BillingRefused, BillingUnavailable
 from kabala_server.config import Config
 from kabala_server.crypto import box
 from kabala_server.db import ROLES, Database
@@ -70,6 +70,10 @@ class AdminIn(BaseModel):
 
 class EmailIn(BaseModel):
     email: str = Field(max_length=254)
+
+
+class SendIn(BaseModel):
+    to: str | None = Field(default=None, max_length=254)  # empty: the customer (and their accountant copy)
 
 
 class IpIn(BaseModel):
@@ -311,21 +315,28 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
 
     # ---- PayPal billing server (../billing) ------------------------------------------------
 
-    def paypal(path: str, admin: dict, params: dict | None = None, method: str = "GET") -> dict:
+    def paypal(path: str, admin: dict, params: dict | None = None, method: str = "GET", body: dict | None = None) -> dict:
         if not billing:
             raise HTTPException(404, "PayPal billing is not connected (KABALA_BILLING_URL, KABALA_BILLING_ADMIN_KEY)")
         try:
             if method == "POST":
-                data = billing.post(path, admin["email"], admin["role"])
+                data = billing.post(path, admin["email"], admin["role"], body)
             else:
                 data = billing.get(path, admin["email"], admin["role"], params)
         except BillingNotFound as e:
             raise HTTPException(404, "not found") from e
+        except BillingRefused as e:
+            raise HTTPException(409, str(e)) from e
         except BillingUnavailable as e:
             raise HTTPException(502, str(e)) from e
         if admin["role"] == "viewer":  # the billing server masks too; never rely on one side alone
-            for row in data.get("subscribers", []) + data.get("payments", []) + data.get("keys", []):
+            rows = data.get("subscribers", []) + data.get("payments", []) + data.get("keys", []) + data.get("receipts", [])
+            if "emails" in data:
+                rows.append(data)
+            for row in rows:
                 row["email"] = mask(row["email"]) if "***" not in row["email"] else row["email"]
+            for log in data.get("emails", []) + [r["lastEmail"] for r in data.get("receipts", []) if r.get("lastEmail")]:
+                log["to"] = ", ".join(a if "***" in a else mask(a) for a in log["to"].split(", "))
         return data
 
     @app.get("/admin/api/paypal/status")
@@ -354,4 +365,49 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
             raise HTTPException(400, "invalid key id")
         result = paypal(f"/api/admin/keys/{key_id}/revoke", admin, method="POST")
         db.audit(admin["email"], "key_revoked", key_id, admin["ip"])
+        return result
+
+    # ---- receipts (PDF + email the billing server sends after each payment) -----------------------------
+
+    receipt_id = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+    def check_id(rid: str) -> str:
+        if not receipt_id.fullmatch(rid):
+            raise HTTPException(400, "invalid receipt id")
+        return rid
+
+    @app.get("/admin/api/paypal/receipts")
+    def paypal_receipts(q: str = "", status: str = "", page: int = 1, admin: dict = Depends(viewer)) -> dict:
+        return paypal("/api/admin/receipts", admin, {"q": q[:100] if admin["role"] != "viewer" else "", "status": status, "page": max(1, page)})
+
+    @app.get("/admin/api/paypal/receipts/{rid}")
+    def paypal_receipt(rid: str, admin: dict = Depends(viewer)) -> dict:
+        return paypal(f"/api/admin/receipts/{check_id(rid)}", admin)
+
+    @app.get("/admin/api/paypal/receipts/{rid}/pdf")
+    def paypal_receipt_pdf(rid: str, admin: dict = Depends(admin_)) -> Response:
+        if not billing:
+            raise HTTPException(404, "PayPal billing is not connected")
+        try:
+            pdf = billing.get_bytes(f"/api/admin/receipts/{check_id(rid)}/pdf", admin["email"], admin["role"])
+        except BillingNotFound as e:
+            raise HTTPException(404, "the PDF isn't ready") from e
+        except BillingUnavailable as e:
+            raise HTTPException(502, str(e)) from e
+        db.audit(admin["email"], "receipt_downloaded", rid, admin["ip"])
+        return Response(pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="kabala-receipt-{rid[:8]}.pdf"', "Cache-Control": "no-store"})
+
+    @app.post("/admin/api/paypal/receipts/{rid}/send")
+    def paypal_receipt_send(rid: str, body: SendIn, admin: dict = Depends(admin_)) -> dict:
+        to = (body.to or "").strip()
+        payload = {"to": to} if to else {}
+        result = paypal(f"/api/admin/receipts/{check_id(rid)}/send", admin, method="POST", body=payload)
+        db.audit(admin["email"], "receipt_sent", f"{rid} → {to or 'customer'}", admin["ip"])
+        return result
+
+    @app.post("/admin/api/paypal/receipts/{rid}/retry")
+    def paypal_receipt_retry(rid: str, admin: dict = Depends(admin_)) -> dict:
+        result = paypal(f"/api/admin/receipts/{check_id(rid)}/retry", admin, method="POST", body={})
+        db.audit(admin["email"], "receipt_retry", rid, admin["ip"])
         return result

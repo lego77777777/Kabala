@@ -58,6 +58,9 @@ The admin panel at `server/ /admin` reads `GET /api/admin/stats`, `/subscribers`
   - bound to the method and path
   - single-use (`jti`)
 - **Viewers:** a viewer token gets masked emails and no PayPal ids.
+- **Receipts:** `GET /api/admin/receipts[/:id[/pdf]]`, plus `POST /api/admin/receipts/:id/send {to?}` and `POST /api/admin/receipts/:id/retry`.
+  - The body is bound to the token (`bh`).
+  - Typed addresses go through validator.js `isEmail` (copied into `src/vendor/validator/`), with stricter options in `src/email/address.ts`: no display names, no IP domains, and no `,` `;` `<` `>`, since recipients are stored comma-joined.
 
 ## Single source of truth for prices
 

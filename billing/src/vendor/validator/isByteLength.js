@@ -1,5 +1,5 @@
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
-import assertString from './util/assertString';
+import assertString from './util/assertString.js'; // Kabala: explicit .js, required by Node's ES modules
 
 /* eslint-disable prefer-rest-params */
 export default function isByteLength(str, options) {

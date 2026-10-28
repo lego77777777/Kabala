@@ -1,9 +1,9 @@
-import assertString from './util/assertString';
-import checkHost from './util/checkHost';
-import isByteLength from './isByteLength';
-import isFQDN from './isFQDN';
-import isIP from './isIP';
-import merge from './util/merge';
+import assertString from './util/assertString.js'; // Kabala: explicit .js, required by Node's ES modules
+import checkHost from './util/checkHost.js'; // Kabala: explicit .js, required by Node's ES modules
+import isByteLength from './isByteLength.js'; // Kabala: explicit .js, required by Node's ES modules
+import isFQDN from './isFQDN.js'; // Kabala: explicit .js, required by Node's ES modules
+import isIP from './isIP.js'; // Kabala: explicit .js, required by Node's ES modules
+import merge from './util/merge.js'; // Kabala: explicit .js, required by Node's ES modules
 var default_email_options = {
   allow_display_name: false,
   allow_underscores: false,

@@ -26,7 +26,9 @@ import { z } from "zod";
 import { registerAdminApi } from "./admin/admin-api.js";
 import type { Currency } from "./config/pricing.config.js";
 import type { Db } from "./db/client.js";
+import { isMailbox } from "./email/address.js";
 import type { LicenseKeyService } from "./licenses/keys.js";
+import type { ReceiptPipeline } from "./receipts/pipeline.js";
 import { pricingConfig } from "./config/pricing.config.js";
 import { BillingError, type BillingService } from "./services/billing.js";
 import type { GoogleVerifier } from "./services/google.js";
@@ -49,7 +51,7 @@ export interface AppDeps {
   /** receipt PDFs and the "send again" action (src/receipts/pipeline.ts) */
   receipts?: { storage: Storage; links: LinkSigner; resend(receiptId: string, userId: string): Promise<boolean> };
   /** read-only API for the admin panel (src/admin/admin-api.ts); off without ADMIN_PANEL_PUBLIC_KEY */
-  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService };
+  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService; receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry">; storage: Storage } };
   /** license keys: activation in the desktop app, "new key" on the account page */
   keys?: LicenseKeyService;
 }
@@ -243,7 +245,7 @@ export async function buildApp(d: AppDeps): Promise<FastifyInstance> {
     const uid = await userId(req, reply, true);
     if (!uid) return;
     const body = z
-      .object({ ccEmail: z.union([z.string().trim().email().max(254), z.literal(""), z.null()]).optional(), locale: z.enum(["he", "en"]).optional() })
+      .object({ ccEmail: z.union([z.string().trim().max(254).refine(isMailbox), z.literal(""), z.null()]).optional(), locale: z.enum(["he", "en"]).optional() })
       .parse(req.body ?? {});
     await d.billing.updateReceiptSettings(uid, { ccEmail: body.ccEmail === "" ? null : body.ccEmail, locale: body.locale });
     return d.billing.account(uid);

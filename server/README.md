@@ -97,6 +97,10 @@ Open `https://<server>/admin` in Chrome. The spec it was built from is [`docs/ad
 | owner | Everything an admin can, plus managing admins |
 
 - **PayPal page:** shows subscribers, payments, this month's revenue and license keys from the PayPal billing server. For keys it shows who has one, how many times it was activated and when it was last used, with a revoke button for admins. It shows only the last group of each key, never the full key.
+- **Customer receipts page:** shows every receipt the PayPal server issued after a payment (the PDF and its email are sent automatically, with retries).
+  - Each receipt shows its status and its latest email; its details window shows the full email history.
+  - An admin can send it again to the customer or to another address (for example the accountant), download the PDF, or retry a receipt that failed.
+  - Each panel request with a body is signed together with that body (`bh`), so a captured token can't send to another address.
 - **Live data:** the open page re-reads its data every 30 seconds, so new users, payments and keys appear without reloading.
   - Each request is a 60-second, single-use JWT for one path, signed by the panel with Ed25519 using [PyJWT](https://github.com/jpadilla/pyjwt), copied into `vendor/jwt/` (changes in its `KABALA_CHANGES.md`).
   - The billing server verifies it with `jose` and holds only the public key.

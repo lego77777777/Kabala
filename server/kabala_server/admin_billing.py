@@ -12,6 +12,9 @@ Setup:  python -m kabala_server.admin_billing keygen
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import sys
 import time
 import uuid
@@ -34,6 +37,10 @@ class BillingNotFound(Exception):
     pass
 
 
+class BillingRefused(Exception):
+    """The billing server said no for a reason worth showing (400 invalid request, 409 e.g. not ready yet)."""
+
+
 class BillingClient:
     def __init__(self, base_url: str, private_key_pem: str, http: requests.Session | None = None) -> None:
         u = urlparse(base_url)
@@ -45,31 +52,47 @@ class BillingClient:
             raise RuntimeError("KABALA_BILLING_ADMIN_KEY must be an Ed25519 private key (run: python -m kabala_server.admin_billing keygen)")
         self.http = http or requests.Session()
 
-    def token(self, method: str, path: str, admin_email: str, role: str) -> str:
+    def token(self, method: str, path: str, admin_email: str, role: str, body: bytes | None = None) -> str:
         now = int(time.time())
         claims = {"iss": ISSUER, "aud": AUDIENCE, "sub": admin_email, "role": role, "htm": method, "htu": path,
                   "iat": now, "exp": now + TTL_S, "jti": uuid.uuid4().hex}
+        if body is not None:  # bound to this exact body: the token can't carry another recipient, for example
+            claims["bh"] = base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("=")
         return jwt.encode(claims, self.key, algorithm="EdDSA")
+
+    @staticmethod
+    def canonical(body: dict) -> bytes:
+        """Sorted keys, no spaces: the same bytes the billing server hashes (canonical() in admin-api.ts)."""
+        return json.dumps(body, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode()
 
     def get(self, path: str, admin_email: str, role: str, params: dict | None = None) -> dict:
         return self._call("GET", path, admin_email, role, params)
 
-    def post(self, path: str, admin_email: str, role: str) -> dict:
-        return self._call("POST", path, admin_email, role)
+    def post(self, path: str, admin_email: str, role: str, body: dict | None = None) -> dict:
+        return self._call("POST", path, admin_email, role, body=body)
 
-    def _call(self, method: str, path: str, admin_email: str, role: str, params: dict | None = None) -> dict:
+    def get_bytes(self, path: str, admin_email: str, role: str) -> bytes:
+        return self._call("GET", path, admin_email, role, raw=True)
+
+    def _call(self, method: str, path: str, admin_email: str, role: str, params: dict | None = None,
+              body: dict | None = None, raw: bool = False):
         query = {k: v for k, v in (params or {}).items() if v not in (None, "")}
         url = f"{self.base}{path}" + (f"?{urlencode(query)}" if query else "")
-        headers = {"Authorization": f"Bearer {self.token(method, path, admin_email, role)}"}
+        data = self.canonical(body) if body is not None else None
+        headers = {"Authorization": f"Bearer {self.token(method, path, admin_email, role, data)}"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
         try:
-            r = self.http.request(method, url, headers=headers, timeout=10)
+            r = self.http.request(method, url, headers=headers, data=data, timeout=20)
         except requests.RequestException as e:
             raise BillingUnavailable("billing server unreachable") from e
         if r.status_code == 404:
             raise BillingNotFound(path)
+        if r.status_code in (400, 409):
+            raise BillingRefused(r.json().get("error", "refused") if "json" in r.headers.get("content-type", "") else "refused")
         if r.status_code != 200:
             raise BillingUnavailable(f"billing server answered {r.status_code}")
-        return r.json()
+        return r.content if raw else r.json()
 
 
 def keygen() -> tuple[str, str]:

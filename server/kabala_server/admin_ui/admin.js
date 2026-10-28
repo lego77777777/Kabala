@@ -7,6 +7,7 @@ const STATUS_NAME = { active: "פעיל", trialing: "ניסיון", past_due: "�
 const ACTION_NAME = {
   login: "כניסה", login_failed: "קוד שגוי", logout: "יציאה", comp_on: "נתן Pro ידני", comp_off: "ביטל Pro ידני",
   export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP", key_revoked: "ביטל מפתח רישיון",
+  receipt_sent: "שלח קבלה במייל", receipt_retry: "ניסה שוב קבלה", receipt_downloaded: "הוריד קבלה",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
 const ROUTES = {
@@ -14,6 +15,7 @@ const ROUTES = {
   users: { title: "משתמשים", render: (v) => usersView(v, false) },
   payments: { title: "תשלומים (Stripe)", render: (v) => usersView(v, true) },
   paypal: { title: "PayPal", render: paypalView, paypal: true },
+  receipts: { title: "קבלות ללקוחות", render: receiptsView, paypal: true },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
@@ -172,8 +174,8 @@ function start() {
   route();
   api("/admin/api/paypal/status").then((s) => {
     paypalConnected = s.connected;
-    document.querySelector("[data-paypal]").hidden = !s.connected;
-    if (location.hash === "#paypal") route();
+    for (const a of document.querySelectorAll("[data-paypal]")) a.hidden = !s.connected;
+    if (location.hash === "#paypal" || location.hash === "#receipts") route();
   }).catch(() => {});
 }
 
@@ -184,6 +186,7 @@ function route() {
   for (const a of document.querySelectorAll(".sidebar nav a")) a.classList.toggle("active", a.dataset.route === name);
   $("title").textContent = ROUTES[name].title;
   $("sidebar").classList.remove("open");
+  if ($("modal").open) closeModal(); // a details window belongs to the page it was opened from
   const view = $("view");
   view.replaceChildren(loading());
   ROUTES[name].render(view).catch((e) => e.message !== "signed out" && view.replaceChildren(failed(e)));
@@ -193,12 +196,12 @@ window.addEventListener("hashchange", route);
 
 // Keep the open page in sync: re-read it every 30 seconds while the tab is visible and nobody is typing,
 // so a new user, payment or key shows up without reloading. Filters stay (viewState).
-const LIVE = new Set(["dashboard", "users", "payments", "paypal", "security"]);
+const LIVE = new Set(["dashboard", "users", "payments", "paypal", "receipts", "security"]);
 setInterval(() => {
   const name = location.hash.slice(1) || "dashboard";
   const busy = $("modal").open || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName);
   if (!me || document.hidden || busy || !LIVE.has(name) || !ROUTES[name]) return;
-  if (name === "paypal" && !paypalConnected) return;
+  if (ROUTES[name].paypal && !paypalConnected) return;
   const scroll = window.scrollY;
   ROUTES[name].render($("view")).then(() => window.scrollTo(0, scroll)).catch(() => {});
 }, 30_000);
@@ -491,6 +494,79 @@ async function paypalView(view) {
     h("p", { class: "note" }, "כל קונה מקבל מפתח במייל עם התשלום הראשון. המפתח עצמו לא נשמר בשרת בטקסט גלוי (רק hash ועותק מוצפן שרק בעליו רואה), ולכן כאן מוצגת רק הקבוצה האחרונה שלו."),
     h("div", { class: "toolbar" }, keySearch, keyStatus), keysBox);
   await Promise.all([loadSubs(), loadPays(1), loadKeys()]);
+}
+
+const RECEIPT_STATUS = { pending: ["בהכנה", ""], generated: ["נוצרה, נשלחת", "trialing"], sent: ["נשלחה", "active"], failed: ["נכשלה", "canceled"] };
+const EMAIL_STATUS = { queued: ["בתור", ""], sent: ["נשלח", "active"], failed: ["נכשל", "canceled"] };
+const TRIGGER = { auto: "אוטומטי אחרי התשלום", resend: "הלקוח ביקש שוב", admin: "נשלח מהפאנל" };
+const statusPillOf = (map, s) => h("span", { class: `pill ${(map[s] || [s, ""])[1]}` }, (map[s] || [s])[0]);
+
+async function receiptsView(view) {
+  const state = (viewState.receipts ??= { q: "", status: "", page: 1 });
+  const box = h("div");
+  const load = async () => {
+    const qs = new URLSearchParams({ q: state.q, status: state.status, page: state.page });
+    const d = await api(`/admin/api/paypal/receipts?${qs}`);
+    if (!d.receipts.length) { box.replaceChildren(h("div", { class: "card empty" }, "אין קבלות. קבלה נוצרת ונשלחת אוטומטית אחרי כל תשלום.")); return; }
+    box.replaceChildren(
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["מספר", "לקוח", "סכום", "סטטוס", "הונפקה", "מייל אחרון", ""].map((t) => h("th", {}, t)))),
+        h("tbody", {}, d.receipts.map((r) => h("tr", { class: "click", tabindex: "0", onclick: () => receiptDialog(r.id, load), onkeydown: (e) => e.key === "Enter" && receiptDialog(r.id, load) },
+          h("td", {}, `${r.kind === "refund" ? "החזר" : "קבלה"} ${r.number}`), h("td", { dir: "ltr", class: "ltr" }, r.email),
+          h("td", {}, money(r.amountMinor, r.currency)), h("td", {}, statusPillOf(RECEIPT_STATUS, r.status)), h("td", {}, dateTime(r.issuedAt)),
+          h("td", {}, r.lastEmail ? h("span", {}, statusPillOf(EMAIL_STATUS, r.lastEmail.status), " ", h("span", { class: "muted" }, ago(r.lastEmail.at))) : "—"),
+          h("td", {}, h("span", { class: "muted" }, "פרטים ›"))))))),
+      pager(d.page, d.pages, d.total, (p) => { state.page = p; load(); }));
+  };
+  const search = h("input", { type: "search", placeholder: can("admin") ? "חיפוש לפי מייל הלקוח…" : "חיפוש זמין למנהל ומעלה", disabled: !can("admin"), dir: "ltr", value: state.q });
+  let timer;
+  search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { state.q = search.value; state.page = 1; load(); }, 250); });
+  const select = h("select", { "aria-label": "סטטוס" }, [["", "כל הקבלות"], ...Object.entries(RECEIPT_STATUS).map(([k, v]) => [k, v[0]])].map(([v, t]) => h("option", { value: v, selected: state.status === v }, t)));
+  select.addEventListener("change", () => { state.status = select.value; state.page = 1; load(); });
+  view.replaceChildren(
+    h("p", { class: "note" }, "אחרי כל תשלום ב-PayPal נוצרת קבלה (PDF) ונשלחת ללקוח במייל אוטומטית, עם ניסיונות חוזרים. כאן רואים מה נשלח, ואפשר לשלוח שוב ללקוח או לכתובת אחרת. הדף מתעדכן לבד."),
+    h("div", { class: "toolbar" }, search, select), box);
+  await load();
+}
+
+async function receiptDialog(id, reload) {
+  const r = await api(`/admin/api/paypal/receipts/${id}`);
+  const actions = [];
+  if (can("admin")) {
+    if (r.status === "failed") {
+      actions.push(h("button", { class: "btn primary", onclick: async () => {
+        try { await api(`/admin/api/paypal/receipts/${id}/retry`, { method: "POST", body: {} }); closeModal(); toast("נשלח לניסיון נוסף"); reload(); } catch (e) { toast(e.message); }
+      } }, "נסה שוב"));
+    } else if (r.status !== "pending") {
+      actions.push(h("button", { class: "btn primary", onclick: async () => {
+        try { await api(`/admin/api/paypal/receipts/${id}/send`, { method: "POST", body: {} }); closeModal(); toast("הקבלה נשלחת ללקוח"); reload(); } catch (e) { toast(e.message); }
+      } }, "שלח שוב ללקוח"));
+      const other = h("input", { type: "email", dir: "ltr", placeholder: "accountant@example.com", "aria-label": "כתובת אחרת" });
+      actions.push(h("form", { class: "toolbar", onsubmit: async (ev) => {
+        ev.preventDefault();
+        try { await api(`/admin/api/paypal/receipts/${id}/send`, { method: "POST", body: { to: other.value } }); closeModal(); toast(`הקבלה נשלחת אל ${other.value}`); reload(); }
+        catch (e) { toast(e.status === 409 ? "הכתובת לא תקינה" : e.message); }
+      } }, other, h("button", { class: "btn ghost", type: "submit" }, "שלח לכתובת אחרת")));
+    }
+    if (r.status !== "pending") actions.push(h("a", { class: "btn ghost", href: `/admin/api/paypal/receipts/${id}/pdf`, download: "" }, "⬇ PDF"));
+  }
+  modal(
+    h("h2", {}, `${r.kind === "refund" ? "החזר" : "קבלה"} ${r.number}`),
+    h("dl", {},
+      h("dt", {}, "לקוח"), h("dd", { dir: "ltr" }, r.email),
+      h("dt", {}, "סכום"), h("dd", {}, money(r.amountMinor, r.currency)),
+      h("dt", {}, "סטטוס"), h("dd", {}, statusPillOf(RECEIPT_STATUS, r.status)),
+      h("dt", {}, "הונפקה"), h("dd", {}, dateTime(r.issuedAt)),
+      r.lastError ? [h("dt", {}, "שגיאה"), h("dd", { class: "muted", dir: "ltr" }, r.lastError)] : null),
+    h("h2", {}, "מיילים שנשלחו"),
+    r.emails.length
+      ? h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["מתי", "אל", "למה", "סטטוס"].map((t) => h("th", {}, t)))),
+          h("tbody", {}, r.emails.map((e) => h("tr", {},
+            h("td", {}, dateTime(e.updatedAt)), h("td", { dir: "ltr", class: "ltr" }, e.to), h("td", {}, TRIGGER[e.trigger] || e.trigger),
+            h("td", { title: e.error || "" }, statusPillOf(EMAIL_STATUS, e.status)))))))
+      : h("p", { class: "muted" }, "עוד לא נשלח מייל."),
+    h("div", { class: "actions" }, h("button", { class: "btn ghost", onclick: closeModal }, "סגור"), ...actions));
 }
 
 // ---- boot --------------------------------------------------------------------------------------

@@ -206,9 +206,27 @@ class FakeBilling:
     """Plays the billing server: checks the panel's JWT exactly like src/admin/admin-api.ts, then answers."""
 
     def __init__(self, public_key, down=False):
-        self.public_key, self.down, self.claims = public_key, down, []
+        self.public_key, self.down, self.claims, self.bodies = public_key, down, [], []
 
-    def request(self, method, url, headers=None, timeout=None):
+    def receipts(self, method, path, data):
+        import json
+        from types import SimpleNamespace as ns
+
+        rid = "11111111-2222-4333-8444-555555555555"
+        if path.endswith("/pdf"):
+            return ns(status_code=200, content=b"%PDF-1.7 fake", headers={"content-type": "application/pdf"})
+        if method == "POST" and path.endswith("/send"):
+            to = json.loads(data).get("to")
+            if to and "," in to:
+                return ns(status_code=400, headers={"content-type": "application/json"}, json=lambda: {"error": "invalid_request"})
+            return ns(status_code=200, headers={"content-type": "application/json"}, json=lambda: {"ok": True})
+        row = {"id": rid, "email": "dana.levi@gmail.com", "status": "sent", "number": "000001",
+               "lastEmail": {"status": "sent", "trigger": "auto", "to": "dana.levi@gmail.com, cpa@office.co.il"}}
+        body = {"receipts": [row], "total": 1, "page": 1, "pages": 1} if path == "/api/admin/receipts" else {
+            **row, "emails": [{"status": "sent", "trigger": "auto", "to": "dana.levi@gmail.com, cpa@office.co.il"}]}
+        return ns(status_code=200, headers={"content-type": "application/json"}, json=lambda: body)
+
+    def request(self, method, url, headers=None, data=None, timeout=None):
         import requests
         from types import SimpleNamespace as ns
         from urllib.parse import urlparse
@@ -220,8 +238,18 @@ class FakeBilling:
         claims = jwt.decode(headers["Authorization"].removeprefix("Bearer "), self.public_key, algorithms=["EdDSA"],
                             audience="kabala-billing", issuer="kabala-admin")
         assert claims["htm"] == method and claims["htu"] == urlparse(url).path and claims["exp"] - claims["iat"] == 60
+        if data is not None:  # the token is bound to this exact body
+            import base64
+            import hashlib
+
+            assert claims["bh"] == base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
+        else:
+            assert "bh" not in claims
         self.claims.append(claims)
+        self.bodies.append(data)
         path = urlparse(url).path
+        if path.startswith("/api/admin/receipts"):
+            return self.receipts(method, path, data)
         if method == "POST" and path.endswith("/revoke"):
             return ns(status_code=200 if KEY_ID in path else 404, json=lambda: {"ok": True})
         if path == "/api/admin/keys":
@@ -292,3 +320,35 @@ def test_paypal_license_keys_list_and_revoke(tmp_path):
     assert owner.post("/admin/api/paypal/keys/../../admins/revoke", headers=H).status_code in (400, 404)
     assert owner.post("/admin/api/paypal/keys/00000000-0000-4000-8000-000000000000/revoke", headers=H).status_code == 404
     assert "key_revoked" in [e["action"] for e in owner.get("/admin/api/audit").json()["entries"]]
+
+
+RID = "11111111-2222-4333-8444-555555555555"
+
+
+def test_paypal_receipts_list_send_and_download(tmp_path):
+    env_, fake = paypal_env(tmp_path)
+    owner = sign_in(env_)
+    r = owner.get("/admin/api/paypal/receipts").json()["receipts"][0]
+    assert r["email"] == "dana.levi@gmail.com" and r["lastEmail"]["to"] == "dana.levi@gmail.com, cpa@office.co.il"
+    assert owner.post(f"/admin/api/paypal/receipts/{RID}/send", json={}, headers=H).json() == {"ok": True}
+    assert fake.bodies[-1] == b"{}"
+    assert owner.post(f"/admin/api/paypal/receipts/{RID}/send", json={"to": "cpa@office.co.il"}, headers=H).json() == {"ok": True}
+    assert fake.bodies[-1] == b'{"to":"cpa@office.co.il"}'
+    assert owner.post(f"/admin/api/paypal/receipts/{RID}/send", json={"to": "a@b.co,evil@x.com"}, headers=H).status_code == 409
+    pdf = owner.get(f"/admin/api/paypal/receipts/{RID}/pdf")
+    assert pdf.headers["content-type"] == "application/pdf" and pdf.content.startswith(b"%PDF")
+    assert owner.post("/admin/api/paypal/receipts/not-an-id/send", json={}, headers=H).status_code == 400
+    actions = [e["action"] for e in owner.get("/admin/api/audit").json()["entries"]]
+    assert actions[:3] == ["receipt_downloaded", "receipt_sent", "receipt_sent"]
+
+
+def test_paypal_receipts_viewer_masked_and_read_only(tmp_path):
+    env_, fake = paypal_env(tmp_path)
+    sign_in(env_).post("/admin/api/admins", json={"email": "view@kabala.app", "role": "viewer"}, headers=H)
+    v = sign_in(env_, "view@kabala.app")
+    r = v.get("/admin/api/paypal/receipts").json()["receipts"][0]
+    assert r["email"] == "da***@gmail.com" and r["lastEmail"]["to"] == "da***@gmail.com, cp***@office.co.il"
+    detail = v.get(f"/admin/api/paypal/receipts/{RID}").json()
+    assert detail["email"] == "da***@gmail.com" and detail["emails"][0]["to"] == "da***@gmail.com, cp***@office.co.il"
+    assert v.post(f"/admin/api/paypal/receipts/{RID}/send", json={}, headers=H).status_code == 403
+    assert v.get(f"/admin/api/paypal/receipts/{RID}/pdf").status_code == 403

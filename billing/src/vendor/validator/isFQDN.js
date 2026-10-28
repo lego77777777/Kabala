@@ -1,5 +1,5 @@
-import assertString from './util/assertString';
-import merge from './util/merge';
+import assertString from './util/assertString.js'; // Kabala: explicit .js, required by Node's ES modules
+import merge from './util/merge.js'; // Kabala: explicit .js, required by Node's ES modules
 var default_fqdn_options = {
   require_tld: true,
   allow_underscores: false,

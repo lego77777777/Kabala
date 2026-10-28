@@ -63,7 +63,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     logger: false,
     receipts: { storage, links, resend: (id, uid) => pipeline.resend(id, uid) },
     keys,
-    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys } : undefined,
+    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys, receipts: { pipeline, storage } } : undefined,
   });
 
   async function login(email = "dana@gmail.com") {

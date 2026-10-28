@@ -89,6 +89,33 @@ export class ReceiptPipeline {
     return true;
   }
 
+  /**
+   * From the admin panel: email this receipt again, to the customer (and their accountant copy) or to one
+   * address the admin typed (already validated). "not_ready" while the PDF doesn't exist yet: retry() first.
+   */
+  async adminSend(receiptId: string, to?: string): Promise<"queued" | "not_found" | "not_ready"> {
+    const r = await this.d.receipts.get(receiptId);
+    if (!r) return "not_found";
+    if (!r.pdfKey || r.status === "pending") return "not_ready";
+    await this.queueEmail(r, "admin", to);
+    return "queued";
+  }
+
+  /** From the admin panel: a receipt that failed (PDF or email, after all automatic retries) gets another go. */
+  async retry(receiptId: string): Promise<"queued" | "not_found" | "not_failed"> {
+    const r = await this.d.receipts.get(receiptId);
+    if (!r) return "not_found";
+    if (r.status !== "failed") return "not_failed";
+    if (!r.pdfKey) {
+      await this.d.receipts.setStatus(r.id, "pending", { lastError: null });
+      await this.d.queue.send(JOBS.generate, { receiptId: r.id }); // its email follows automatically
+    } else {
+      await this.d.receipts.setStatus(r.id, "generated", { lastError: null });
+      await this.queueEmail(r, "auto");
+    }
+    return "queued";
+  }
+
   // ---- workers ----------------------------------------------------------------------------------
 
   async generate(receiptId: string, info: JobInfo): Promise<void> {
@@ -185,9 +212,9 @@ export class ReceiptPipeline {
 
   // ---- helpers -------------------------------------------------------------------------------
 
-  private async queueEmail(r: ReceiptRow, trigger: "auto" | "resend") {
+  private async queueEmail(r: ReceiptRow, trigger: "auto" | "resend" | "admin", only?: string) {
     const [user] = await this.d.db.select().from(users).where(eq(users.id, r.userId));
-    const to = [r.customerEmail, ...(user?.receiptCcEmail ? [user.receiptCcEmail] : [])].join(",");
+    const to = only ?? [r.customerEmail, ...(user?.receiptCcEmail ? [user.receiptCcEmail] : [])].join(",");
     const [entry] = await this.d.db.insert(emailLogs).values({ receiptId: r.id, trigger, toAddresses: to }).returning();
     await this.d.queue.send(JOBS.email, { logId: entry!.id });
   }
