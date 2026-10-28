@@ -76,8 +76,8 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
   const mailer = mailerFromEnv(env);
   if (mailer instanceof ConsoleMailer) {
     // without a real sender, receipts would be marked "sent" while no customer gets them
-    if (env.NODE_ENV === "production") throw new Error("no email sender configured: run `npm run gmail:authorize` (Gmail API) or set SMTP_URL / RESEND_API_KEY");
-    console.warn("[mail] no email sender configured: receipts are only logged. Run `npm run gmail:authorize` to send through the Gmail API.");
+    if (env.NODE_ENV === "production") throw new Error("Gmail is not connected: run `npm run gmail:authorize` (all email goes through the Gmail API)");
+    console.warn("[mail] Gmail is not connected: receipts are only logged. Run `npm run gmail:authorize` to send through the Gmail API.");
   }
   const storage = storageFromEnv(env);
   // the link secret never leaves the server; without its own value, it is derived from the license private key

@@ -1,15 +1,18 @@
 """
-Sending email through the Gmail API (users.messages.send) instead of SMTP: sign-in codes, receipts with their PDF,
-and admin alerts. OAuth with google-auth (already a dependency, for Google sign-in); the access token is refreshed
+All email goes through the Gmail API (users.messages.send): sign-in codes, receipts with their PDF, and admin alerts.
+There is no SMTP. OAuth with google-auth (already a dependency, for Google sign-in); the access token is refreshed
 automatically from a refresh token that only allows sending (scope gmail.send), never reading the mailbox.
 
-Setup, once, on your own computer:
-  1. Google Cloud Console → enable the Gmail API → OAuth client of type "Desktop app".
-  2. python -m kabala_server.gmail_api authorize
-     (the OAuth client from GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET, else the desktop app's ../google_client.json)
-     A browser opens, you sign in to the sending Gmail account, and the refresh token is printed.
-     The PayPal billing server reads the same variables (`npm run gmail:authorize`), so one token serves both.
-  3. On the server set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN (and MAIL_FROM with that address).
+Connecting the sending account, from the admin panel ("Gmail" page → "חבר Gmail"):
+  - Google Cloud Console: enable the Gmail API, and create an OAuth client of type "Web application" whose
+    authorized redirect URI is the one the panel shows (…/admin/api/gmail/callback). Set GMAIL_CLIENT_ID and
+    GMAIL_CLIENT_SECRET on the server.
+  - An owner clicks the button, signs in to the Gmail account and approves. The refresh token is stored encrypted
+    in the database. Before any account is connected, the sign-in page offers the same button: the Google account
+    must then be an owner's, and it signs that owner in.
+Or without the panel: GMAIL_REFRESH_TOKEN from `python -m kabala_server.gmail_api authorize` (a Desktop app client,
+or the desktop app's ../google_client.json). The PayPal billing server reads the same variables
+(`npm run gmail:authorize`), so one token can serve both.
 """
 
 from __future__ import annotations
@@ -22,19 +25,26 @@ import os
 import secrets
 import sys
 import threading
+import time
 import webbrowser
+from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
+from kabala_server.crypto import box
 from kabala_server.receipts import Mail, receipt_message
 
 SCOPE = "https://www.googleapis.com/auth/gmail.send"
+CONNECT_SCOPES = f"openid email {SCOPE}"  # the address of the account being connected, and sending
+REVOKE_URI = "https://oauth2.googleapis.com/revoke"
+PENDING_S = 600  # an unfinished "connect" expires after 10 minutes
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
@@ -43,6 +53,11 @@ GOOGLE_CLIENT_FILE = Path(__file__).resolve().parents[2] / "google_client.json" 
 
 class GmailApiError(OSError):
     """A refused send. The text is Google's (status and reason), never a token."""
+
+
+class GmailNotConnected(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("Gmail is not connected (admin panel → Gmail)")
 
 
 class GmailApiMailer:
@@ -78,13 +93,166 @@ class GmailApiMailer:
             raise GmailApiError(f"Gmail API {r.status_code} {reason}"[:300])
 
 
+class Gmail:
+    """
+    The server's one mailer. Sends as the account connected in the panel (stored encrypted), else GMAIL_REFRESH_TOKEN.
+    `ready` is False until one exists; sending then raises GmailNotConnected.
+    """
+
+    def __init__(self, db: Any, config: Any, *, post: Callable[..., Any] = requests.post,
+                 verify_id_token: Callable[[str], dict] | None = None, session_factory: Callable[[str], Any] | None = None,
+                 clock: Callable[[], float] = time.time) -> None:
+        self.db, self.config, self.clock = db, config, clock
+        self._box = box(config.secrets, "gmail-token")
+        self._post = post
+        self._verify = verify_id_token or _google_id_verifier(config.gmail_client_id)
+        self._session_factory = session_factory
+        self._lock = threading.Lock()
+        self._mailer: tuple[str, GmailApiMailer] | None = None  # (refresh token, mailer), rebuilt when it changes
+        self._pending: dict[str, dict] = {}
+        self.last_error: str | None = None
+        self.last_sent_at: float | None = None
+
+    # ---- status ----
+
+    @property
+    def client_configured(self) -> bool:
+        return bool(self.config.gmail_client_id and self.config.gmail_client_secret)
+
+    def _stored(self) -> dict | None:
+        row = self.db.one("SELECT * FROM gmail_account WHERE id=1")
+        token = self._box.decrypt(row["refresh_token"]) if row else None
+        return {**row, "refresh_token": token} if row and token else None
+
+    def _token(self) -> tuple[str, str, str] | None:
+        """(refresh token, account address or "", source)."""
+        if not self.client_configured:
+            return None
+        row = self._stored()
+        if row:
+            return row["refresh_token"], row["email"], "panel"
+        if self.config.gmail_refresh_token:
+            address = parseaddr(self.config.mail_from)[1]
+            return self.config.gmail_refresh_token, address if "@" in address else "", "env"
+        return None
+
+    @property
+    def ready(self) -> bool:
+        return self._token() is not None
+
+    def status(self) -> dict:
+        row, token = self._stored(), self._token()
+        return {"connected": token is not None, "email": token[1] if token else None, "source": token[2] if token else None,
+                "connectedAt": row["connected_at"] if row else None, "connectedBy": row["connected_by"] if row else None,
+                "clientConfigured": self.client_configured, "lastError": self.last_error,
+                "lastSentAt": int(self.last_sent_at) if self.last_sent_at else None}
+
+    # ---- sending ----
+
+    def _current(self) -> GmailApiMailer:
+        token = self._token()
+        if not token:
+            raise GmailNotConnected()
+        refresh, address, _source = token
+        with self._lock:
+            if not self._mailer or self._mailer[0] != refresh:
+                sender = formataddr((sender_name(self.config.mail_from), address)) if address else self.config.mail_from
+                session = self._session_factory(refresh) if self._session_factory else None
+                self._mailer = (refresh, GmailApiMailer(self.config.gmail_client_id, self.config.gmail_client_secret,
+                                                        refresh, sender, session=session))
+            return self._mailer[1]
+
+    def _sending(self, fn: Callable[[GmailApiMailer], None]) -> None:
+        try:
+            fn(self._current())
+        except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"[:300]
+            raise
+        self.last_error, self.last_sent_at = None, self.clock()
+
+    def send(self, to: str, subject: str, text: str) -> None:
+        self._sending(lambda m: m.send(to, subject, text))
+
+    def send_mail(self, mail: Mail) -> None:
+        self._sending(lambda m: m.send_mail(mail))
+
+    # ---- connecting from the panel (OAuth for a Web application client, with PKCE) ----
+
+    def start(self, redirect_uri: str, admin_email: str | None) -> str:
+        """The Google consent URL. admin_email: the signed-in owner, or None before any account is connected."""
+        if not self.client_configured:
+            raise RuntimeError("set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET first")
+        now = self.clock()
+        self._pending = {k: v for k, v in self._pending.items() if v["until"] > now}
+        state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(64)
+        self._pending[state] = {"verifier": verifier, "admin": admin_email, "redirect": redirect_uri, "until": now + PENDING_S}
+        return auth_url(self.config.gmail_client_id, redirect_uri, state, verifier, scope=CONNECT_SCOPES)
+
+    def finish(self, state: str, code: str) -> tuple[str, str | None, str]:
+        """Google's redirect → (account address, the owner who started it or None, refresh token). ValueError if refused."""
+        pending = self._pending.pop(state, None)  # single use
+        if not pending or pending["until"] < self.clock():
+            raise ValueError("this link expired, start again")
+        r = self._post(TOKEN_URI, data={
+            "client_id": self.config.gmail_client_id, "client_secret": self.config.gmail_client_secret, "code": code,
+            "code_verifier": pending["verifier"], "grant_type": "authorization_code", "redirect_uri": pending["redirect"],
+        }, timeout=20)
+        body = r.json() if r.status_code < 500 else {}
+        if r.status_code >= 400 or not body.get("refresh_token") or not body.get("id_token"):
+            raise ValueError(f"Google refused: {body.get('error', r.status_code)}")
+        if SCOPE not in body.get("scope", "").split():
+            raise ValueError("permission to send email was not granted (tick the Gmail box on Google's page)")
+        claims = self._verify(body["id_token"])
+        address = str(claims.get("email", "")).lower()
+        if not address or not claims.get("email_verified"):
+            raise ValueError("Google did not confirm the account's address")
+        return address, pending["admin"], body["refresh_token"]
+
+    def connect(self, address: str, refresh_token: str, by: str) -> None:
+        old = self._stored()
+        self.db.run("INSERT OR REPLACE INTO gmail_account (id, email, refresh_token, connected_at, connected_by) VALUES (1, ?, ?, ?, ?)",
+                    (address, self._box.encrypt(refresh_token), _iso(self.clock()), by))
+        self.last_error = None
+        if old and old["refresh_token"] != refresh_token:
+            self._revoke(old["refresh_token"])
+
+    def disconnect(self) -> None:
+        old = self._stored()
+        self.db.run("DELETE FROM gmail_account WHERE id=1")
+        if old:
+            self._revoke(old["refresh_token"])
+
+    def _revoke(self, token: str) -> None:
+        try:  # best effort: the row is gone either way
+            self._post(REVOKE_URI, data={"token": token}, timeout=10)
+        except requests.RequestException:
+            pass
+
+
+def sender_name(mail_from: str) -> str:
+    """MAIL_FROM is "Kabala" or "Kabala <x@y>": the name shown, next to the connected account (Gmail sends as it)."""
+    name, address = parseaddr(mail_from)
+    return name or (mail_from.strip() if "@" not in mail_from else "") or "Kabala"
+
+
+def _iso(t: float) -> str:
+    return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds")
+
+
+def _google_id_verifier(client_id: str) -> Callable[[str], dict]:
+    from google.auth.transport import requests as g_requests
+    from google.oauth2 import id_token
+
+    return lambda token: id_token.verify_oauth2_token(token, g_requests.Request(), audience=client_id)
+
+
 # --- one-time authorization (python -m kabala_server.gmail_api authorize) ---
 
-def auth_url(client_id: str, redirect_uri: str, state: str, verifier: str) -> str:
+def auth_url(client_id: str, redirect_uri: str, state: str, verifier: str, scope: str = SCOPE) -> str:
     """Offline access (a refresh token) for sending only, with PKCE."""
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     return AUTH_URI + "?" + urlencode({
-        "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "scope": SCOPE,
+        "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "scope": scope,
         "access_type": "offline", "prompt": "consent", "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256",
     })

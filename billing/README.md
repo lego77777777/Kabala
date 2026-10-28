@@ -19,7 +19,7 @@ The old libraries `checkout-server-sdk` and `paypal-rest-sdk` are officially dep
 ## Encryption in transit and at rest
 
 - **PostgreSQL:** TLS is required in production (`ssl: "require"`, for pg-boss too). `?sslmode=disable` in `DATABASE_URL` is the only way to turn it off, for a database on the same private host.
-- **SMTP:** `requireTLS`, so `smtp://` must upgrade with STARTTLS or the email isn't sent. Plain text is allowed only for a local test server such as Mailpit.
+- **Email:** only through the Gmail API over HTTPS, with a send-only OAuth token; no mail password exists anywhere.
 - **S3:** receipt PDFs are uploaded with `ServerSideEncryption: AES256` on AWS. R2 always encrypts, so it's off by default with `S3_ENDPOINT`. Override with `S3_SSE`.
 - **Access logs:** the signature of `/r/…` receipt links is replaced with `[redacted]`, because the link alone downloads the PDF.
 - **`.env`:** `npm run setup` and `gmail:authorize` write it owner-only (0600), since it holds the license signing key and the Gmail refresh token.
@@ -161,25 +161,22 @@ verified PAYMENT.SALE.COMPLETED ─▶ receipt (pending, running number) ─▶ 
   3. Morning has no external-id field, so the server saves Morning's document id immediately after creation, and a retry reuses it. The Kabala id is also written in the document's remarks field.
   4. For an exempt dealer, a refund document is issued internally (Morning has no credit invoice for an exempt dealer). **Check the right document for refunds with your accountant.**
 
-### Sending domain (so it doesn't land in spam)
+### Sending email (Gmail API only)
 
-`MAIL_FROM` must be on a domain you own (for example `billing@kabala.app`). Add these records at your DNS provider:
+All email (receipts, license keys, admin alerts) goes through the **Gmail API**, from one Gmail or Google Workspace account. There is no SMTP and no other provider.
 
-| Record | Host | Value |
-|---|---|---|
-| SPF (TXT) | `@` | `v=spf1 include:<your sending service> ~all` (Resend: `include:amazonses.com` on the `send` subdomain, as shown in their dashboard) |
-| DKIM (TXT/CNAME) | from the sending service | the key the service gives you |
-| DMARC (TXT) | `_dmarc` | `v=DMARC1; p=quarantine; rua=mailto:dmarc@<domain>` (start with `p=none` for a week) |
+1. In Google Cloud Console, enable the **Gmail API** and publish the OAuth consent screen ("In production"). While it is in "Testing", Google expires the token after 7 days.
+2. Run `npm run gmail:authorize [-- you@gmail.com]`. It opens Google's consent page for the `gmail.send` scope only (it can't read, change or delete mail), and writes `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` and `MAIL_FROM` into `.env`. It uses the desktop app's OAuth client (`../google_client.json`).
+3. Put the same values on the server. The Stripe server (`../server`) reads the same variables, or connects its account from the admin panel's Gmail page.
 
-- **Without your own domain yet:** `SMTP_URL=smtps://you@gmail.com:<app-password>@smtp.gmail.com:465` sends from your Gmail, signed by Google, up to about 500 emails a day.
-- **Resend:** `RESEND_API_KEY` plus a domain verified in their dashboard.
+- **Limits:** Gmail's limits apply: about 500 recipients a day on a personal account, 2,000 on Google Workspace.
+- **Without these variables:** emails are only logged, in development. In production the server refuses to start, so receipts are never marked "sent" when nobody received them.
+- **Delivery:** Google signs the messages (SPF/DKIM of gmail.com, or of your Workspace domain), so they reach the inbox.
 
 ### Local testing
 
 ```bash
-mailpit                                   # SMTP on :1025, inbox at http://localhost:8025 (github.com/axllent/mailpit)
-# .env: SMTP_URL=smtp://127.0.0.1:1025
-npm run demo:receipt -- dana@example.com he yearly   # a simulated payment through the whole flow
+npm run demo:receipt -- dana@example.com he yearly   # a simulated payment through the whole flow (the email goes through Gmail if connected, else to the log)
 npm run preview:receipt                   # sample PDFs (Hebrew/English, exempt/licensed, refund) in .data/preview
 npm run email:dev                         # live preview of the email template at http://localhost:3001
 ```

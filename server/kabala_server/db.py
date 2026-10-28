@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS receipt_settings (
     updated_at TEXT,
     updated_by TEXT
 );
+CREATE TABLE IF NOT EXISTS gmail_account (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    email TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,  -- encrypted (crypto.box "gmail-token")
+    connected_at TEXT NOT NULL,
+    connected_by TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

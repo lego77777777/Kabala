@@ -10,7 +10,7 @@ import { setup } from "./helpers.js";
 class SwitchMailer extends ConsoleMailer {
   down = false;
   override async send(mail: Mail) {
-    if (this.down && mail.attachments?.length) throw new Error("SMTP 451 temporary failure");
+    if (this.down && mail.attachments?.length) throw new Error("Gmail API 503 UNAVAILABLE");
     return super.send(mail);
   }
 }

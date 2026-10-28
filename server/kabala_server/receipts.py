@@ -84,18 +84,6 @@ def receipt_message(sender: str, mail: Mail) -> EmailMessage:
     return msg
 
 
-class SmtpReceiptMailer(email_login.SmtpMailer):
-    """The sign-in code mailer (TLS always), plus HTML, a hidden copy and a PDF attachment."""
-
-    def send_mail(self, mail: Mail) -> None:
-        msg = receipt_message(self.sender, mail)
-        server = self._connect()
-        with server:
-            if self.user:
-                server.login(self.user, self.password)
-            server.send_message(msg, to_addrs=[mail.to, *mail.bcc])  # Bcc only in the envelope, never a header
-
-
 def money(minor: int, currency: str) -> str:
     return f"{SYMBOLS.get(currency.upper(), currency.upper() + ' ')}{minor / 100:,.2f}"
 
@@ -266,8 +254,8 @@ class Receipts:
             return 0
         attempt = e["attempts"] + 1
         try:
-            if not self.mailer:
-                raise RuntimeError("email is not configured (SMTP_URL)")
+            if not self.mailer or not getattr(self.mailer, "ready", True):
+                raise RuntimeError("Gmail is not connected (admin panel → Gmail)")
             to, *bcc = e["to_addresses"].split(",")
             settings = {**self.settings(), **(json.loads(e["draft"]) if e["draft"] else {})}
             mail = self.compose(r, settings)

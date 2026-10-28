@@ -9,6 +9,7 @@ const ACTION_NAME = {
   export_csv: "ייצא CSV", admin_removed: "הסיר מנהל", unban: "שחרר IP", key_revoked: "ביטל מפתח רישיון",
   receipt_sent: "שלח קבלה במייל", receipt_retry: "ניסה שוב קבלה", receipt_downloaded: "הוריד קבלה",
   receipt_settings: "שינה הגדרות שליחה", receipt_test: "שלח מייל בדיקה",
+  gmail_connect: "חיבר Gmail", gmail_disconnect: "ניתק Gmail", gmail_test: "שלח מייל בדיקה מ-Gmail", login_google: "כניסה עם Google",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
 const ROUTES = {
@@ -18,6 +19,7 @@ const ROUTES = {
   paypal: { title: "PayPal", render: paypalView, paypal: true },
   receipts: { title: "קבלות ללקוחות", render: receiptsView },
   sending: { title: "שליחה אוטומטית", render: sendingView },
+  gmail: { title: "Gmail", render: gmailView },
   admins: { title: "מנהלים והרשאות", render: adminsView, min: "owner" },
   security: { title: "אבטחה", render: securityView },
   audit: { title: "יומן פעולות", render: auditView, min: "admin" },
@@ -117,8 +119,27 @@ function showLogin() {
   $("login").hidden = false;
   $("login-email").hidden = false;
   $("login-code").hidden = true;
+  $("login-gmail").hidden = true;
   $("email").focus();
+  // every email goes through Gmail: until an account is connected no code can be sent, so offer to connect it
+  api("/admin/api/mail-status", { allow401: true }).then((st) => {
+    if (st.ready) return;
+    $("login-email").hidden = true;
+    $("login-hint").hidden = true;
+    $("login-gmail").hidden = false;
+    $("login-gmail-btn").hidden = !st.clientConfigured;
+    if (!st.clientConfigured) $("login-gmail-text").textContent = "כל המיילים נשלחים דרך Gmail API. כדי להתחיל, הגדר בשרת את GMAIL_CLIENT_ID ו-GMAIL_CLIENT_SECRET (לקוח OAuth מסוג Web application) והפעל אותו מחדש.";
+  }).catch(() => {});
 }
+
+$("login-gmail-btn").addEventListener("click", async () => {
+  loginError("");
+  try {
+    location.href = (await api("/admin/api/gmail/setup", { method: "POST", allow401: true })).url;
+  } catch (e) {
+    loginError(e.status === 409 ? "Gmail כבר מחובר. רענן את הדף והיכנס עם קוד." : e.message);
+  }
+});
 
 function loginError(text) {
   const e = $("login-error");
@@ -685,6 +706,51 @@ async function sendingView(view) {
     h("div", { class: "toolbar" }, save, test, h("div", { class: "spacer" }), meta),
     ...(editable ? [] : [h("p", { class: "note" }, "כצופה אפשר לראות את ההגדרות, אבל לא לשנות אותן.")]));
   refreshPreview();
+}
+
+// ---- Gmail: the account every email is sent from ------------------------------------------------
+
+async function gmailView(view) {
+  const d = await api("/admin/api/gmail");
+  const busy = (btn, fn) => async () => { btn.disabled = true; try { await fn(); } catch (e) { toast(e.message); } finally { btn.disabled = false; } };
+  const connect = h("button", { class: "btn primary" }, d.connected ? "חבר חשבון אחר" : "חבר Gmail");
+  connect.onclick = busy(connect, async () => { location.href = (await api("/admin/api/gmail/connect", { method: "POST" })).url; });
+  const disconnect = h("button", { class: "btn ghost" }, "נתק");
+  disconnect.onclick = busy(disconnect, async () => {
+    if (!confirm(`לנתק את ${d.email}? עד שיחובר חשבון אחר לא יישלחו מיילים: לא קודי כניסה ולא קבלות.`)) return;
+    await api("/admin/api/gmail/disconnect", { method: "POST" });
+    toast("Gmail נותק");
+    route();
+  });
+  const test = h("button", { class: "btn" }, "שלח לי מייל בדיקה");
+  test.onclick = busy(test, async () => { const r = await api("/admin/api/gmail/test", { method: "POST" }); toast(`נשלח אל ${r.to}`); route(); });
+  const copy = h("button", { class: "btn sm ghost", onclick: async () => { await navigator.clipboard?.writeText(d.redirectUri); toast("הועתק"); } }, "העתק");
+  const row = (label, value) => h("div", { class: "kv" }, h("span", { class: "muted" }, label), value);
+  const source = d.source === "env" ? "משתנה סביבה (GMAIL_REFRESH_TOKEN)" : "חובר מהפאנל";
+  view.replaceChildren(
+    h("p", { class: "note" }, "כל המיילים של השרת נשלחים דרך Gmail API מהחשבון שמחובר כאן: קודי כניסה, קבלות ללקוחות עם ה-PDF, ומיילי התראה. ההרשאה היא לשליחה בלבד: השרת לא יכול לקרוא את תיבת הדואר."),
+    h("div", { class: "cards" },
+      h("div", { class: "card" },
+        h("h3", {}, "החשבון השולח"),
+        d.connected
+          ? h("div", {}, h("div", { class: "value ltr", dir: "ltr" }, d.email || "(הכתובת מ-MAIL_FROM)"), h("span", { class: "pill active" }, "מחובר"))
+          : h("span", { class: "pill canceled" }, "לא מחובר: לא נשלחים מיילים"),
+        d.connected ? row("מקור", source) : null,
+        d.connectedAt ? row("חובר", `${dateTime(d.connectedAt)} · ${d.connectedBy}`) : null,
+        d.lastSentAt ? row("שליחה אחרונה", dateTime(new Date(d.lastSentAt * 1000).toISOString())) : null,
+        d.lastError ? h("div", { class: "error" }, `שגיאה אחרונה: ${d.lastError}`) : null),
+      h("div", { class: "card" },
+        h("h3", {}, "הגדרה ב-Google Cloud"),
+        d.clientConfigured
+          ? h("p", { class: "muted" }, "לקוח OAuth מוגדר בשרת. בלקוח (מסוג Web application) צריך להופיע ה-Redirect URI הזה:")
+          : h("div", { class: "error" }, "חסרים בשרת GMAIL_CLIENT_ID ו-GMAIL_CLIENT_SECRET. צור לקוח OAuth מסוג Web application, הוסף לו את ה-Redirect URI הזה, הגדר את שני המשתנים והפעל את השרת מחדש."),
+        h("div", { class: "toolbar" }, h("code", { dir: "ltr", class: "ltr" }, d.redirectUri), copy),
+        h("p", { class: "muted" }, "וגם: להפעיל את Gmail API בפרויקט, ולפרסם את מסך ההסכמה (In production), אחרת Google מבטל את החיבור אחרי 7 ימים."))),
+    can("owner")
+      ? h("div", { class: "toolbar" }, d.clientConfigured ? connect : null, d.connected && d.source === "panel" ? disconnect : null,
+        d.connected && can("admin") ? test : null)
+      : h("div", { class: "toolbar" }, d.connected && can("admin") ? test : null,
+        h("p", { class: "note" }, "רק בעלים יכולים לחבר או לנתק את Gmail.")));
 }
 
 // ---- boot --------------------------------------------------------------------------------------

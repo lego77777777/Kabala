@@ -81,7 +81,8 @@ def _period_end(sub: dict) -> int | None:
 
 
 def create_app(config: Config | None = None, verify_google: Callable[[str], dict] | None = None, stripe_client: Any = None,
-               mailer: email_login.Mailer | None = None, billing_client: Any = None, receipt_worker: bool = True) -> FastAPI:
+               mailer: email_login.Mailer | None = None, billing_client: Any = None, receipt_worker: bool = True,
+               gmail: gmail_api.Gmail | None = None) -> FastAPI:
     config = config or Config()
     config.check()
     db = Database(config.db_path, config.secrets)
@@ -90,12 +91,10 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         import stripe
 
         stripe_client = stripe.StripeClient(config.stripe_secret_key)
-    if mailer is None and config.gmail_enabled:
-        # one sender for sign-in codes and for receipts (HTML + PDF attachment): the Gmail API, else SMTP
-        mailer = gmail_api.GmailApiMailer(config.gmail_client_id, config.gmail_client_secret, config.gmail_refresh_token,
-                                          config.mail_from)
-    elif mailer is None and config.smtp_url:
-        mailer = receipts_mod.SmtpReceiptMailer(config.smtp_url, config.mail_from)
+    # every email (sign-in codes, receipts with their PDF, alerts) goes through the Gmail API; the account is
+    # connected from the admin panel. A mailer passed in (tests, demos) replaces it.
+    gmail = gmail or gmail_api.Gmail(db, config)
+    mailer = mailer or gmail
     # automatic receipts after Stripe payments (receipts.py); the worker sends what's due in the background
     receipts = receipts_mod.Receipts(db, config, mailer if hasattr(mailer, "send_mail") else None)
     if receipt_worker:
@@ -163,8 +162,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
     @app.post("/api/email/start")
     @limiter.limit("5 per 10 minutes")
     def email_start(request: Request, body: EmailStartIn) -> dict:
-        if not mailer:
-            raise HTTPException(503, "email sign-in is not configured")
+        if not getattr(mailer, "ready", True):
+            raise HTTPException(503, "email sign-in is not configured (connect Gmail in the admin panel)")
         email = email_login.normalize_email(body.email)
         if not email:
             raise HTTPException(400, "invalid email address")
@@ -175,8 +174,8 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
         subject, text = email_login.code_email(email_login.make_code(*issued))
         try:
             mailer.send(email, subject, text)
-        except Exception as e:  # noqa: BLE001 - SMTP down or rejected the address
-            log.warning("sign-in code email failed: %s", type(e).__name__)  # SMTP errors quote the address
+        except Exception as e:  # noqa: BLE001 - Gmail down, not connected, or refused the address
+            log.warning("sign-in code email failed: %s", type(e).__name__)  # mail errors may quote the address
             raise HTTPException(502, "could not send the email") from e
         return {"ok": True, "expires_in": email_login.CODE_TTL_S}
 
@@ -264,6 +263,6 @@ def create_app(config: Config | None = None, verify_google: Callable[[str], dict
             receipts.on_invoice_paid(obj, user.id, obj.get("customer_email") or user.email)
         return {"ok": True}
 
-    admin.install(app, db, config, mailer, limiter, jails, billing=billing_client, receipts=receipts)
+    admin.install(app, db, config, mailer, limiter, jails, billing=billing_client, receipts=receipts, gmail=gmail)
 
     return app

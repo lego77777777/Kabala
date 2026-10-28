@@ -83,9 +83,9 @@ def test_db_file_is_owner_only(tmp_path):
 
 def test_secrets_never_appear_in_the_printed_config():
     cfg = Config(secret=SECRET, google_client_id="cid", stripe_secret_key="sk_live_abc", stripe_webhook_secret="whsec_abc",
-                 smtp_url="smtps://u:pw@h", old_secrets=("o" * 40,))
+                 gmail_client_secret="GOCSPX-abc", gmail_refresh_token="1//rtok", old_secrets=("o" * 40,))
     text = repr(cfg)
-    assert all(s not in text for s in (SECRET, "sk_live_abc", "whsec_abc", "pw@h", "o" * 40))
+    assert all(s not in text for s in (SECRET, "sk_live_abc", "whsec_abc", "GOCSPX-abc", "1//rtok", "o" * 40))
 
 
 def test_behind_a_proxy_only_https_is_served(tmp_path):

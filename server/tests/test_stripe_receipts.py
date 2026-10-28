@@ -31,7 +31,7 @@ class Mailer:
 
     def send_mail(self, mail):
         if self.down:
-            raise ConnectionError("SMTP 451 temporary failure")
+            raise ConnectionError("Gmail API 503 UNAVAILABLE")
         self.receipts.append(mail)
 
     def code_for(self, to):
@@ -164,7 +164,7 @@ def test_failing_email_retries_then_fails_alerts_and_retries_automatically(env):
         env.rc.run_due()
         env.clock.t += 300  # past every backoff wait
     r = env.rc.db.one("SELECT * FROM receipts")
-    assert r["status"] == "failed" and "SMTP 451" in r["last_error"]
+    assert r["status"] == "failed" and "Gmail API 503" in r["last_error"]
     assert [a[0] for a in env.mailer.alerts] == ["alerts@kabala.app"]
     for _ in range(AUTO_RETRY["rounds"] + 2):  # each round fails again, an hour apart, and they stop at the limit
         env.clock.t += AUTO_RETRY["everyMs"] / 1000 + 60

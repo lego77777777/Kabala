@@ -2,8 +2,8 @@
  * npm run demo:receipt -- [email] [he|en] [monthly|yearly]
  *
  * Development only: records a fake PayPal payment for `email` (as a verified PAYMENT.SALE.COMPLETED
- * would) and runs the real receipt flow: queue → PDF → storage → email. With SMTP_URL pointing at
- * Mailpit (smtp://127.0.0.1:1025) the email shows up at http://localhost:8025. Refuses to run in
+ * would) and runs the real receipt flow: queue → PDF → storage → email. The email goes through the
+ * Gmail API when it is connected (`npm run gmail:authorize`), else it is only logged. Refuses to run in
  * production or with live PayPal.
  */
 import { randomUUID } from "node:crypto";
@@ -38,7 +38,6 @@ try {
     status = (await ctx.database.db.select().from(receipts).where(eq(receipts.id, receipt.id)))[0]!.status;
   }
   console.log(`status: ${status} after ${((Date.now() - started) / 1000).toFixed(1)}s`);
-  if (ctx.env.SMTP_URL?.includes("1025")) console.log("open http://localhost:8025 to see the email");
 } finally {
   await ctx.queue.stop();
   await ctx.database.close();

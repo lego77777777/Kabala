@@ -121,7 +121,7 @@ def test_per_address_limit_in_database(tmp_path):
 def test_invalid_email_and_not_configured(env, tmp_path):
     client, _ = env
     assert start(client, "not-an-email").status_code == 400
-    cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "n.db"), smtp_url="")
+    cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "n.db"))  # Gmail not connected
     assert start(TestClient(create_app(cfg, lambda tok: {}))).status_code == 503
 
 
@@ -140,11 +140,3 @@ def test_hotp_matches_rfc4226_test_vectors():
 
     secret = base64.b32encode(b"12345678901234567890").decode()
     assert [pyotp.HOTP(secret).at(i) for i in range(3)] == ["755224", "287082", "359152"]
-
-
-def test_smtp_url_parsing():
-    m = email_login.SmtpMailer("smtps://me%40gmail.com:app%20pw@smtp.gmail.com", "Kabala <me@gmail.com>")
-    assert (m.tls, m.host, m.port, m.user, m.password) == (True, "smtp.gmail.com", 465, "me@gmail.com", "app pw")
-    assert email_login.SmtpMailer("smtp://localhost:1025", "x").port == 1025
-    with pytest.raises(RuntimeError):
-        email_login.SmtpMailer("http://x", "x")

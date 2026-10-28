@@ -14,6 +14,7 @@ failed code and action is written to admin_audit.
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import time
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from kabala_server import email_login
@@ -119,7 +120,7 @@ def _user_out(row: dict, full: bool) -> dict:
 
 def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mailer | None, limiter: Any,
             jails: OrderedDict, clock: Callable[[], float] = time.monotonic, billing: BillingClient | None = None,
-            receipts: Any = None) -> None:
+            receipts: Any = None, gmail: Any = None) -> None:
     sessions = box(config.secrets, "admin-session")
     if billing is None and config.billing_url and config.billing_admin_key:
         billing = BillingClient(config.billing_url, config.billing_admin_key)
@@ -185,8 +186,8 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
     @limiter.limit("5 per 10 minutes")
     def login_start(request: Request, body: LoginStart) -> dict:
         email = email_login.normalize_email(body.email)
-        if not mailer:
-            raise HTTPException(503, "email is not configured (SMTP_URL)")
+        if not mailer or not getattr(mailer, "ready", True):
+            raise HTTPException(503, "Gmail is not connected")
         # Same answer whether or not the address is an admin, so the panel can't be used to find out who is.
         if email and db.admin_role(email):
             issued = db.issue_email_code(f"admin:{email}", email_login.new_secret(), time.time(), email_login.CODE_TTL_S,
@@ -212,11 +213,14 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
                 db.audit(email, "login_failed", None, ip_of(request))
             raise HTTPException(401, "invalid or expired code")
         db.close_email_code(f"admin:{email}")
+        sign_in(request, response, email)
+        return {"email": email, "role": role}
+
+    def sign_in(request: Request, response: Response, email: str, how: str = "login") -> None:
         token = sessions.encrypt(json.dumps({"email": email, "exp": int(time.time()) + SESSION_S}))
         response.set_cookie(COOKIE, token, max_age=SESSION_S, httponly=True, samesite="strict", path="/admin",
                             secure=request.url.scheme == "https" or config.proxy_hops > 0)
-        db.audit(email, "login", None, ip_of(request))
-        return {"email": email, "role": role}
+        db.audit(email, how, None, ip_of(request))
 
     @app.post("/admin/api/logout")
     def logout(response: Response, admin: dict = Depends(viewer)) -> dict:
@@ -227,6 +231,107 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
     @app.get("/admin/api/me")
     def me(admin: dict = Depends(viewer)) -> dict:
         return {"email": admin["email"], "role": admin["role"]}
+
+    # ---- Gmail: the account every email is sent from (gmail_api.py) -------------------------
+
+    def redirect_uri(request: Request) -> str:
+        if config.server_url:
+            return config.server_url.rstrip("/") + "/admin/api/gmail/callback"
+        uri = str(request.url_for("gmail_callback"))
+        return uri.replace("http://", "https://", 1) if config.proxy_hops > 0 else uri  # TLS ends at the proxy
+
+    def gmail_page(title: str, detail: str = "", ok: bool = False) -> HTMLResponse:
+        """Google redirects the browser here. A page that links back (not a redirect), so the SameSite=Strict cookie
+        is sent again on the way to the panel."""
+        color = "#15803d" if ok else "#b91c1c"
+        body = (f'<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+                f'<meta http-equiv="refresh" content="{2 if ok else 30};url=/admin#gmail"><title>Gmail</title>'
+                f'<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem;text-align:center">'
+                f'<h1 style="color:{color};font-size:1.4rem">{html.escape(title)}</h1><p>{html.escape(detail)}</p>'
+                f'<p><a href="/admin#gmail">חזרה לפאנל הניהול</a></p></body></html>')
+        return HTMLResponse(body, status_code=200 if ok else 400)
+
+    @app.get("/admin/api/mail-status")
+    @limiter.limit("30/minute")
+    def mail_status(request: Request) -> dict:
+        """For the sign-in page: before Gmail is connected nobody can get a code, so it offers to connect it."""
+        return {"ready": bool(gmail and gmail.ready), "clientConfigured": bool(gmail and gmail.client_configured)}
+
+    @app.get("/admin/api/gmail")
+    def gmail_status(request: Request, admin: dict = Depends(viewer)) -> dict:
+        if not gmail:
+            raise HTTPException(503, "Gmail is not available")
+        return {**gmail.status(), "redirectUri": redirect_uri(request)}
+
+    @app.post("/admin/api/gmail/connect")
+    def gmail_connect(request: Request, admin: dict = Depends(owner)) -> dict:
+        if not gmail or not gmail.client_configured:
+            raise HTTPException(409, "set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET on the server first")
+        return {"url": gmail.start(redirect_uri(request), admin["email"])}
+
+    @app.post("/admin/api/gmail/setup")
+    @limiter.limit("5 per 10 minutes")
+    def gmail_setup(request: Request) -> dict:
+        """First connection, from the sign-in page: only while nothing is connected; the Google account must be an owner's."""
+        if not gmail or not gmail.client_configured:
+            raise HTTPException(409, "set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET on the server first")
+        if gmail.ready:
+            raise HTTPException(409, "Gmail is already connected; sign in with a code")
+        return {"url": gmail.start(redirect_uri(request), None)}
+
+    @app.get("/admin/api/gmail/callback", name="gmail_callback")
+    @limiter.limit("20/minute")
+    def gmail_callback(request: Request, state: str = "", code: str = "", error: str = "") -> HTMLResponse:
+        if not gmail:
+            return gmail_page("Gmail לא זמין")
+        if error or not code or not state:
+            return gmail_page("החיבור בוטל", "לא אושרה גישה בחשבון Google.")
+        try:
+            address, started_by, token = gmail.finish(state, code)
+        except ValueError as e:
+            return gmail_page("החיבור נכשל", str(e))
+        except Exception:  # noqa: BLE001 - Google unreachable
+            return gmail_page("החיבור נכשל", "Google לא ענה, נסה שוב.")
+        if started_by:  # from the panel: still an owner?
+            if db.admin_role(started_by) != "owner":
+                gmail._revoke(token)
+                return gmail_page("אין הרשאה", "רק בעלים יכולים לחבר את Gmail.")
+            gmail.connect(address, token, started_by)
+            db.audit(started_by, "gmail_connect", address, ip_of(request))
+            return gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}.", ok=True)
+        # first connection from the sign-in page: Google proved who this is; they must be an owner
+        if gmail.ready or db.admin_role(address) != "owner":
+            gmail._revoke(token)
+            return gmail_page("אין הרשאה", f"{address} אינו בעלים של הפאנל. התחבר עם חשבון Google של בעלים "
+                                           "(KABALA_OWNER_EMAILS), או היכנס עם קוד וחבר מדף Gmail.")
+        gmail.connect(address, token, address)
+        db.audit(address, "gmail_connect", address, ip_of(request))
+        response = gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}, ונכנסת לפאנל.", ok=True)
+        sign_in(request, response, address, "login_google")
+        return response
+
+    @app.post("/admin/api/gmail/disconnect")
+    def gmail_disconnect(admin: dict = Depends(owner)) -> dict:
+        if not gmail:
+            raise HTTPException(503, "Gmail is not available")
+        before = gmail.status()["email"]
+        gmail.disconnect()
+        db.audit(admin["email"], "gmail_disconnect", before, admin["ip"])
+        return gmail.status()
+
+    @app.post("/admin/api/gmail/test")
+    @limiter.limit("5/minute")
+    def gmail_test(request: Request, admin: dict = Depends(admin_)) -> dict:
+        if not gmail or not gmail.ready:
+            raise HTTPException(409, "Gmail is not connected")
+        try:
+            gmail.send(admin["email"], "בדיקת שליחה מ-Kabala / Kabala test email",
+                       "המייל הזה נשלח דרך Gmail API מפאנל הניהול. אם הוא הגיע, השליחה עובדת.\n\n"
+                       "This email was sent through the Gmail API from the admin panel.\n")
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, gmail.last_error or type(e).__name__) from e
+        db.audit(admin["email"], "gmail_test", admin["email"], admin["ip"])
+        return {"ok": True, "to": admin["email"]}
 
     # ---- data ------------------------------------------------------------------------------
 

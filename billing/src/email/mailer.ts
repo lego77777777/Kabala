@@ -1,11 +1,9 @@
 /**
- * Outgoing email behind one interface, chosen by environment (see mailerFromEnv):
- *   GMAIL_REFRESH_TOKEN → GmailApiMailer (Gmail API + OAuth, no password; `npm run gmail:authorize`)
- *   SMTP_URL        → SmtpMailer (Nodemailer): Mailpit locally, Gmail / Amazon SES / Postmark in production
- *   RESEND_API_KEY  → ResendMailer
- *   neither         → ConsoleMailer (development: logs recipient and subject only, never payment details)
+ * Outgoing email goes only through the Gmail API (see mailerFromEnv):
+ *   GMAIL_REFRESH_TOKEN → GmailApiMailer (OAuth, send-only scope, no password; `npm run gmail:authorize`)
+ *   not set             → ConsoleMailer (development only: logs recipient and subject, never payment details;
+ *                         refused in production, see context.ts)
  */
-import nodemailer, { type Transporter } from "nodemailer";
 import { GmailApiMailer } from "./gmail-api.js";
 
 export interface Mail {
@@ -34,59 +32,7 @@ export class ConsoleMailer implements Mailer {
   }
 }
 
-export class SmtpMailer implements Mailer {
-  private readonly transport: Transporter;
-
-  /** e.g. smtp://localhost:1025 (Mailpit), smtps://user:app-password@smtp.gmail.com:465 */
-  constructor(smtpUrl: string, private readonly from: string, private readonly replyTo?: string) {
-    // requireTLS: with smtp:// the connection must upgrade with STARTTLS or fail, never send receipts and the
-    // password in clear (smtps:// is TLS from the start). Only a local test server (Mailpit) may skip it.
-    const local = /^smtps?:\/\/([^@/]*@)?(localhost|127\.0\.0\.1)[:/]?/i.test(smtpUrl);
-    this.transport = nodemailer.createTransport({ url: smtpUrl, requireTLS: !local });
-  }
-
-  async send(mail: Mail): Promise<{ id: string }> {
-    const info = await this.transport.sendMail({
-      from: this.from,
-      replyTo: this.replyTo,
-      to: mail.to,
-      cc: mail.cc,
-      bcc: mail.bcc,
-      subject: mail.subject,
-      text: mail.text,
-      html: mail.html,
-      attachments: mail.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: "application/pdf" })),
-    });
-    return { id: info.messageId };
-  }
-}
-
-export class ResendMailer implements Mailer {
-  constructor(private readonly apiKey: string, private readonly from: string, private readonly fetchImpl: typeof fetch = fetch) {}
-  async send(mail: Mail): Promise<{ id?: string }> {
-    const r = await this.fetchImpl("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: this.from,
-        to: [mail.to],
-        cc: mail.cc,
-        bcc: mail.bcc,
-        subject: mail.subject,
-        text: mail.text,
-        html: mail.html,
-        attachments: mail.attachments?.map((a) => ({ filename: a.filename, content: a.content.toString("base64") })),
-      }),
-    });
-    if (!r.ok) throw new Error(`email failed (${r.status})`);
-    const body = (await r.json().catch(() => ({}))) as { id?: string };
-    return { id: body.id };
-  }
-}
-
 export function mailerFromEnv(env: {
-  SMTP_URL?: string;
-  RESEND_API_KEY?: string;
   MAIL_FROM: string;
   MAIL_REPLY_TO?: string;
   GMAIL_CLIENT_ID?: string;
@@ -96,8 +42,6 @@ export function mailerFromEnv(env: {
   if (env.GMAIL_REFRESH_TOKEN && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET) {
     return new GmailApiMailer({ clientId: env.GMAIL_CLIENT_ID, clientSecret: env.GMAIL_CLIENT_SECRET, refreshToken: env.GMAIL_REFRESH_TOKEN, from: env.MAIL_FROM, replyTo: env.MAIL_REPLY_TO });
   }
-  if (env.SMTP_URL) return new SmtpMailer(env.SMTP_URL, env.MAIL_FROM, env.MAIL_REPLY_TO);
-  if (env.RESEND_API_KEY) return new ResendMailer(env.RESEND_API_KEY, env.MAIL_FROM);
   return new ConsoleMailer();
 }
 

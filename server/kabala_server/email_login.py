@@ -14,12 +14,8 @@ from __future__ import annotations
 
 import logging
 import re
-import smtplib
-import ssl
 import unicodedata
-from email.message import EmailMessage
 from typing import Protocol
-from urllib.parse import unquote, urlparse
 
 from kabala_server.vendor import pyotp
 
@@ -34,41 +30,9 @@ _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 
 
 class Mailer(Protocol):
+    """gmail_api.Gmail: every email goes through the Gmail API."""
+
     def send(self, to: str, subject: str, text: str) -> None: ...
-
-
-class SmtpMailer:
-    """
-    SMTP_URL: smtp://user:password@host:587 (STARTTLS) or smtps://user:password@host:465 (TLS),
-    e.g. Gmail with an app password, Amazon SES, Postmark, Mailgun, or Mailpit for development.
-    """
-
-    def __init__(self, url: str, sender: str) -> None:
-        u = urlparse(url)
-        if u.scheme not in ("smtp", "smtps") or not u.hostname:
-            raise RuntimeError("SMTP_URL must look like smtp://user:password@host:587 or smtps://…:465")
-        self.tls = u.scheme == "smtps"
-        self.host, self.port = u.hostname, u.port or (465 if self.tls else 587)
-        self.user, self.password = unquote(u.username or ""), unquote(u.password or "")
-        self.sender = sender
-
-    def _connect(self) -> smtplib.SMTP:
-        """An encrypted connection: TLS from the start (smtps), or STARTTLS before anything else (smtp)."""
-        context = ssl.create_default_context()
-        if self.tls:
-            return smtplib.SMTP_SSL(self.host, self.port, timeout=15, context=context)
-        server = smtplib.SMTP(self.host, self.port, timeout=15)
-        server.starttls(context=context)
-        return server
-
-    def send(self, to: str, subject: str, text: str) -> None:
-        msg = EmailMessage()
-        msg["From"], msg["To"], msg["Subject"] = self.sender, to, subject
-        msg.set_content(text)
-        with self._connect() as server:
-            if self.user:
-                server.login(self.user, self.password)
-            server.send_message(msg)
 
 
 def normalize_email(email: str) -> str | None:

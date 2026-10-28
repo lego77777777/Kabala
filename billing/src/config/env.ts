@@ -69,13 +69,10 @@ const Env = z
     /** HMAC + AES key for license keys (32+ random characters); derived from the license signing key if empty */
     LICENSE_KEY_SECRET: z.string().optional(),
 
-    /** email: SMTP_URL (Nodemailer: Mailpit, Gmail, SES, Postmark…) or RESEND_API_KEY; neither = log only */
-    SMTP_URL: z.string().optional(),
-    /** Gmail API sending (OAuth, gmail.send): written by `npm run gmail:authorize` */
+    /** email goes only through the Gmail API (OAuth, gmail.send): written by `npm run gmail:authorize`; unset = log only (not in production) */
     GMAIL_CLIENT_ID: z.string().optional(),
     GMAIL_CLIENT_SECRET: z.string().optional(),
     GMAIL_REFRESH_TOKEN: z.string().optional(),
-    RESEND_API_KEY: z.string().optional(),
     MAIL_FROM: z.string().default("Kabala <billing@kabala.app>"),
     MAIL_REPLY_TO: z.string().optional(),
     /** gets an alert when a receipt fails after all retries */

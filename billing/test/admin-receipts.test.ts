@@ -10,7 +10,7 @@ import { setup } from "./helpers.js";
 class FailingMailer extends ConsoleMailer {
   fail = true;
   override async send(mail: Mail) {
-    if (this.fail && mail.attachments?.length) throw new Error("SMTP 451 temporary failure");
+    if (this.fail && mail.attachments?.length) throw new Error("Gmail API 503 UNAVAILABLE");
     return super.send(mail);
   }
 }
@@ -97,7 +97,7 @@ describe("admin panel: receipts", () => {
     const { t, call } = await panel(mailer);
     const [r] = (await call("GET", "/api/admin/receipts?status=failed")).json().receipts;
     expect(r).toMatchObject({ status: "failed" });
-    expect(r.lastError).toContain("SMTP 451");
+    expect(r.lastError).toContain("Gmail API 503");
     mailer.fail = false; // the mail provider is back
     expect((await call("POST", `/api/admin/receipts/${r.id}/retry`, { body: {} })).json()).toEqual({ ok: true });
     expect((await call("GET", `/api/admin/receipts/${r.id}`)).json()).toMatchObject({ status: "sent" });

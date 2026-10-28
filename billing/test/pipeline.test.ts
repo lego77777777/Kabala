@@ -31,7 +31,7 @@ class FlakyMailer extends ConsoleMailer {
     super();
   }
   override async send(mail: Mail) {
-    if (!mail.subject.startsWith("[Kabala billing]") && this.calls++ < this.failures) throw new Error("SMTP 451 temporary failure");
+    if (!mail.subject.startsWith("[Kabala billing]") && this.calls++ < this.failures) throw new Error("Gmail API 503 UNAVAILABLE");
     return super.send(mail);
   }
 }
@@ -112,7 +112,7 @@ describe("payment → receipt → customer's inbox", () => {
     expect((await t.webhook("PAYMENT.SALE.COMPLETED", sale(sub.id))).statusCode).toBe(200); // the payment itself is safe
     const [r] = await t.db.select().from(receipts);
     expect(r).toMatchObject({ status: "failed" });
-    expect(r!.lastError).toContain("SMTP 451");
+    expect(r!.lastError).toContain("Gmail API 503");
     const [log] = await t.db.select().from(emailLogs);
     expect(log).toMatchObject({ status: "failed", attempts: 5 });
     const alert = mailer.sent.find((m) => m.to === "admin@kabala.test");

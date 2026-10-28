@@ -26,6 +26,10 @@
         <button class="btn primary" type="submit">כניסה</button>
         <button class="btn link" type="button" id="login-back">מייל אחר</button>
       </form>
+      <div id="login-gmail" hidden>
+        <p class="note" id="login-gmail-text">כל המיילים נשלחים דרך Gmail, ועוד לא חובר חשבון Gmail, אז אי אפשר לשלוח קוד כניסה. בעלים: התחבר עם חשבון Google שלך כדי לחבר את Gmail ולהיכנס.</p>
+        <button class="btn primary" type="button" id="login-gmail-btn">חבר Gmail והיכנס</button>
+      </div>
       <p class="error" id="login-error" role="alert" hidden></p>
     </div>
   </main>
@@ -41,6 +45,7 @@
         <a href="#paypal" data-route="paypal" data-paypal hidden><span class="ico">🅿</span>PayPal</a>
         <a href="#receipts" data-route="receipts"><span class="ico">🧾</span>קבלות ללקוחות</a>
         <a href="#sending" data-route="sending"><span class="ico">✉</span>שליחה אוטומטית</a>
+        <a href="#gmail" data-route="gmail"><span class="ico">📧</span>Gmail</a>
         <a href="#admins" data-route="admins" data-min="owner"><span class="ico">🔑</span>מנהלים והרשאות</a>
         <a href="#security" data-route="security"><span class="ico">🛡</span>אבטחה</a>
         <a href="#audit" data-route="audit" data-min="admin"><span class="ico">📜</span>יומן פעולות</a>

@@ -22,19 +22,20 @@ class Config:
     latest_version: str = field(default_factory=lambda: os.environ.get("LATEST_VERSION", "0.1.0"))
     download_url: str = field(default_factory=lambda: os.environ.get("DOWNLOAD_URL", "https://serewf191-tech.github.io/kabala/"))
     session_days: int = 30
-    # sign-in by email code (kabala_server/email_login.py); off without SMTP_URL
-    smtp_url: str = field(default_factory=lambda: os.environ.get("SMTP_URL", ""), repr=False)
     # admin panel (/admin): addresses that are always owners, comma-separated; more admins are added in the panel
     owner_emails: tuple[str, ...] = field(default_factory=lambda: tuple(
         e.strip().lower() for e in os.environ.get("KABALA_OWNER_EMAILS", "").split(",") if e.strip()))
     # admin panel ↔ PayPal billing server (admin_billing.py); both empty = the panel shows Stripe only
     billing_url: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_URL", ""))
     billing_admin_key: str = field(default_factory=lambda: os.environ.get("KABALA_BILLING_ADMIN_KEY", ""), repr=False)
-    # sending through the Gmail API instead of SMTP (gmail_api.py); all three set = used for every email
+    # all email goes through the Gmail API (gmail_api.py): the OAuth client; the account is connected in the panel,
+    # or given as GMAIL_REFRESH_TOKEN. Without it, sign-in by email code and receipt emails are off.
     gmail_client_id: str = field(default_factory=lambda: os.environ.get("GMAIL_CLIENT_ID", ""))
     gmail_client_secret: str = field(default_factory=lambda: os.environ.get("GMAIL_CLIENT_SECRET", ""), repr=False)
     gmail_refresh_token: str = field(default_factory=lambda: os.environ.get("GMAIL_REFRESH_TOKEN", ""), repr=False)
-    mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala <no-reply@kabala.app>"))
+    mail_from: str = field(default_factory=lambda: os.environ.get("MAIL_FROM", "Kabala"))  # the sender's name
+    # this server's public address, for Google's redirect back after connecting Gmail (default: from the request)
+    server_url: str = field(default_factory=lambda: os.environ.get("KABALA_SERVER_URL", ""))
     # anti-DDoS (kabala_server/shield.py)
     # automatic receipts after Stripe payments (receipts.py); the seller is shown on every receipt
     seller_name: str = field(default_factory=lambda: os.environ.get("SELLER_NAME", "Kabala"))
@@ -61,14 +62,8 @@ class Config:
             raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
         if len(self.secret) < 32:
             raise RuntimeError("KABALA_SECRET must be at least 32 characters")
-        gmail = {"GMAIL_CLIENT_ID": self.gmail_client_id, "GMAIL_CLIENT_SECRET": self.gmail_client_secret,
-                 "GMAIL_REFRESH_TOKEN": self.gmail_refresh_token}
-        if any(gmail.values()) and not all(gmail.values()):
-            raise RuntimeError(f"Gmail API needs all of: {', '.join(n for n, v in gmail.items() if not v)}")
-
-    @property
-    def gmail_enabled(self) -> bool:
-        return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)
+        if self.gmail_refresh_token and not (self.gmail_client_id and self.gmail_client_secret):
+            raise RuntimeError("GMAIL_REFRESH_TOKEN needs GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET")
 
     @property
     def secrets(self) -> tuple[str, ...]:
