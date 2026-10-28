@@ -2,7 +2,8 @@
 import { createHash } from "node:crypto";
 import { loadEnv, type EnvConfig } from "./config/env.js";
 import { openDatabase, type Database } from "./db/client.js";
-import { ConsoleMailer, mailerFromEnv, type Mailer } from "./email/mailer.js";
+import { GmailAccount } from "./email/gmail-account.js";
+import { ConsoleMailer, type Mailer } from "./email/mailer.js";
 import type { PayPalGateway } from "./paypal/gateway.js";
 import { SdkGateway } from "./paypal/sdk-gateway.js";
 import type { Seller } from "./pdf/receipt-document.js";
@@ -26,7 +27,7 @@ export interface Context {
   paypal: PayPalGateway;
   tokens: TokenService;
   billing: BillingService;
-  mailer: Mailer;
+  mailer: GmailAccount;
   storage: Storage;
   links: LinkSigner;
   queue: JobQueue;
@@ -73,11 +74,14 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
   await database.migrate();
   const paypal = paypalFromEnv(env);
   const log = { info: (o: object, m?: string) => console.info(m, o), warn: (o: object, m?: string) => console.warn(m, o), error: (o: object, m?: string) => console.error(m, o) };
-  const mailer = mailerFromEnv(env);
-  if (mailer instanceof ConsoleMailer) {
-    // without a real sender, receipts would be marked "sent" while no customer gets them
-    if (env.NODE_ENV === "production") throw new Error("Gmail is not connected: run `npm run gmail:authorize` (all email goes through the Gmail API)");
-    console.warn("[mail] Gmail is not connected: receipts are only logged. Run `npm run gmail:authorize` to send through the Gmail API.");
+  // all email goes through Gmail: the account connected in the admin panel, else GMAIL_* from `npm run gmail:authorize`.
+  // In production nothing falls back to a log, so a receipt is never marked "sent" while no customer got it.
+  const keySecret = env.LICENSE_KEY_SECRET ?? createHash("sha256").update(`license-keys:${env.LICENSE_PRIVATE_KEY}`).digest("hex");
+  const mailer = new GmailAccount({ db: database.db, secret: keySecret, env, fallback: env.NODE_ENV === "production" ? undefined : new ConsoleMailer() });
+  if (!(await mailer.ready())) {
+    console.warn(env.NODE_ENV === "production"
+      ? "[mail] Gmail is not connected: emails fail until an owner connects it (admin panel → Gmail) or runs `npm run gmail:authorize`."
+      : "[mail] Gmail is not connected: emails are only logged. Connect it in the admin panel or run `npm run gmail:authorize`.");
   }
   const storage = storageFromEnv(env);
   // the link secret never leaves the server; without its own value, it is derived from the license private key
@@ -102,7 +106,6 @@ export async function createContext(opts: { workers?: boolean } = {}): Promise<C
     log,
   });
   if (opts.workers !== false) await pipeline.start();
-  const keySecret = env.LICENSE_KEY_SECRET ?? createHash("sha256").update(`license-keys:${env.LICENSE_PRIVATE_KEY}`).digest("hex");
   const keys = new LicenseKeyService({ db: database.db, secret: keySecret });
   const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: env.LICENSE_TTL_DAYS, keys, log });
   return { env, database, paypal, tokens, billing, mailer, storage, links, queue, pipeline, keys, receiptSettings };

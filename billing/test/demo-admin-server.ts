@@ -1,12 +1,21 @@
 // Demo only (not run by the test suite): the billing app with sample PayPal data and the admin API on, for
 // trying the admin panel end to end. Usage: npx tsx test/demo-admin-server.ts <panel_public.pem> <port>
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { licenseKeys } from "../src/db/schema.js";
 import { setup } from "./helpers.js";
 
-const [pemPath, port = "8791"] = process.argv.slice(2);
-const t = await setup({ adminPublicKeyPem: readFileSync(pemPath!, "utf8") });
+const [pemPath, port = "8791", mailLog] = process.argv.slice(2);
+// Google faked: the Gmail account the panel connects "sends" by appending to mailLog (or the console)
+const gmailFetch = (async (url: string, init?: RequestInit) => {
+  if (url.includes("oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token: "demo", expires_in: 3600 }), { status: 200 });
+  const raw = Buffer.from(JSON.parse(String(init?.body)).raw, "base64url").toString();
+  const line = `[billing gmail] ${raw.match(/^From: .*$/m)?.[0]} ${raw.match(/^To: .*$/m)?.[0]} ${raw.match(/^Subject: .*$/m)?.[0]}\n`;
+  if (mailLog) appendFileSync(mailLog, line);
+  else process.stdout.write(line);
+  return new Response(JSON.stringify({ id: "demo" }), { status: 200 });
+}) as typeof fetch;
+const t = await setup({ adminPublicKeyPem: readFileSync(pemPath!, "utf8"), gmailFetch });
 const names = ["dana.levi", "yossi.cohen", "noa.mizrahi", "avi.peretz", "michal.biton", "itai.friedman", "shira.azulay", "omer.katz", "tamar.shapiro", "roni.dahan", "maya.gabay", "lior.amar"];
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)]!;
 for (let i = 0; i < 26; i++) {

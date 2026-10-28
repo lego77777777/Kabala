@@ -110,14 +110,43 @@ class Google:
         return self.sessions.setdefault(refresh_token, Session())
 
 
-def make(tmp_path, **kw):
+class Billing:
+    """The PayPal billing server's admin API (BillingClient's get/post), keeping the Gmail account it was given."""
+
+    def __init__(self):
+        self.account, self.calls, self.down = None, [], False
+
+    def get(self, path, email, role, params=None):
+        self._check()
+        assert path == "/api/admin/gmail"
+        a = self.account
+        return {"connected": bool(a), "email": a and a["email"], "source": a and "panel", "lastError": None, "lastSentAt": None}
+
+    def post(self, path, email, role, body=None):
+        self._check()
+        self.calls.append((path, email, role, body))
+        if path == "/api/admin/gmail":
+            self.account = body
+        elif path == "/api/admin/gmail/disconnect":
+            self.account = None
+        elif path == "/api/admin/gmail/test":
+            return {"ok": True, "to": email}
+        return {"connected": bool(self.account)}
+
+    def _check(self):
+        from kabala_server.admin_billing import BillingUnavailable
+        if self.down:
+            raise BillingUnavailable("billing server unreachable")
+
+
+def make(tmp_path, billing=None, **kw):
     google = Google()
     cfg = Config(secret="x" * 40, google_client_id="cid", db_path=str(tmp_path / "g.db"), owner_emails=(OWNER,),
                  gmail_client_id="gid.apps.googleusercontent.com", gmail_client_secret="GOCSPX-s", **kw)
     from kabala_server.db import Database
     gm = gmail_api.Gmail(Database(cfg.db_path, cfg.secrets), cfg, post=google.post, verify_id_token=google.verify,
                          session_factory=google.session)
-    app = create_app(cfg, lambda t: {}, receipt_worker=False, gmail=gm)
+    app = create_app(cfg, lambda t: {}, receipt_worker=False, gmail=gm, billing_client=billing)
     return TestClient(app), google, gm
 
 
@@ -225,3 +254,36 @@ def test_sender_name():
     assert gmail_api.sender_name("Kabala") == "Kabala"
     assert gmail_api.sender_name("Kabala Billing <x@y.z>") == "Kabala Billing"
     assert gmail_api.sender_name("x@y.z") == "Kabala"
+
+
+def test_the_paypal_server_gets_the_same_account(tmp_path):
+    billing = Billing()
+    c, google, gm = make(tmp_path, billing=billing)
+    page, _ = connect_via(c, "/admin/api/gmail/setup")
+    assert "גם משרת ה-PayPal" in page.text
+    path, actor, role, body = billing.calls[0]
+    assert (path, actor, role) == ("/api/admin/gmail", OWNER, "owner")
+    assert body == {"email": OWNER, "clientId": "gid.apps.googleusercontent.com", "clientSecret": "GOCSPX-s", "refreshToken": "1//rt1"}
+    pp = c.get("/admin/api/gmail").json()["paypal"]
+    assert pp["reachable"] and pp["sameAccount"] and pp["sync"]["ok"]
+    assert c.post("/admin/api/gmail/test-paypal", headers=H).json() == {"ok": True, "to": OWNER}
+    # switching the account updates it there too; disconnecting tells it to forget it
+    google.account = "billing@kabala.app"
+    connect_via(c, "/admin/api/gmail/connect")
+    assert billing.account["email"] == "billing@kabala.app" and billing.account["refreshToken"] == "1//rt2"
+    c.post("/admin/api/gmail/disconnect", headers=H)
+    assert billing.account is None and billing.calls[-1][0] == "/api/admin/gmail/disconnect"
+
+
+def test_paypal_server_down_then_synced_by_hand(tmp_path):
+    billing = Billing()
+    billing.down = True
+    c, google, gm = make(tmp_path, billing=billing)
+    page, _ = connect_via(c, "/admin/api/gmail/setup")
+    assert page.status_code == 200 and "שרת ה-PayPal לא עודכן" in page.text  # Gmail itself is connected
+    pp = c.get("/admin/api/gmail").json()["paypal"]
+    assert pp == {"reachable": False, "error": "billing server unreachable", "sync": {"ok": False, "error": pp["sync"]["error"], "at": pp["sync"]["at"]}}
+    assert c.post("/admin/api/gmail/sync-paypal", headers=H).status_code == 502
+    billing.down = False
+    r = c.post("/admin/api/gmail/sync-paypal", headers=H).json()
+    assert r["ok"] and r["paypal"]["sameAccount"] and billing.account["refreshToken"] == "1//rt1"

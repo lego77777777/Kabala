@@ -16,6 +16,11 @@
  *   POST /api/admin/receipt-settings          {...}  save them (admin+)
  *   POST /api/admin/receipt-settings/preview  {...}  subject + opening line as the newest receipt would get them
  *   POST /api/admin/receipt-settings/test     {...}  email the newest receipt, worded so, to the admin (admin+)
+ *   GET  /api/admin/gmail                              the Gmail account all email is sent from
+ *   POST /api/admin/gmail   {email, clientId, clientSecret, refreshToken}   connect it (owner; the panel does this
+ *                                                     when an owner connects Gmail on its Gmail page)
+ *   POST /api/admin/gmail/disconnect                  forget it (owner)
+ *   POST /api/admin/gmail/test                        a test email to the admin (admin+)
  *
  * A request with a body also carries `bh`, the SHA-256 of the body (sorted keys), so a token can't be reused
  * with another body (e.g. another recipient).
@@ -39,6 +44,7 @@ import type { ReceiptSettingsService } from "../receipts/settings.js";
 import { checkPatch } from "../receipts/settings.js";
 import { LIMITS, TemplateError, VARIABLES } from "../receipts/templates.js";
 import type { Storage } from "../storage/storage.js";
+import type { GmailAccount } from "../email/gmail-account.js";
 import type { LicenseKeyService } from "../licenses/keys.js";
 import { isEntitled } from "../services/subscription-state.js";
 
@@ -77,6 +83,7 @@ class SeenTokens {
 export async function registerAdminApi(app: FastifyInstance, d: {
   db: Db; publicKeyPem: string; mode: string; keys?: LicenseKeyService; now?: () => Date;
   receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry" | "sendTest" | "preview">; storage: Storage; settings?: ReceiptSettingsService };
+  gmail?: GmailAccount;
 }) {
   const key = await importSPKI(d.publicKeyPem.replace(/\\n/g, "\n"), "EdDSA");
   const now = d.now ?? (() => new Date());
@@ -361,6 +368,62 @@ export async function registerAdminApi(app: FastifyInstance, d: {
       return templateError(reply, e);
     }
     if (result !== "queued") return reply.code(409).send({ error: result });
+    return { ok: true, to: c.sub };
+  });
+
+  // ---- Gmail: the account every email is sent from ------------------------------------------------------
+
+  app.get("/api/admin/gmail", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (!d.gmail) return reply.code(404).send({ error: "not_configured" });
+    return d.gmail.status();
+  });
+
+  const GmailBody = z.object({
+    email: z.string().email().max(254),
+    clientId: z.string().min(10).max(200).regex(/\.apps\.googleusercontent\.com$/),
+    clientSecret: z.string().min(8).max(200),
+    refreshToken: z.string().min(10).max(2000),
+  }).strict();
+
+  app.post("/api/admin/gmail", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role !== "owner") return reply.code(403).send({ error: "forbidden" });
+    if (!d.gmail) return reply.code(404).send({ error: "not_configured" });
+    const body = GmailBody.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    await d.gmail.connect({ ...body.data, email: body.data.email.toLowerCase() }, c.sub);
+    req.log.info({ by: c.sub, account: body.data.email }, "Gmail connected from the admin panel");
+    return d.gmail.status();
+  });
+
+  app.post("/api/admin/gmail/disconnect", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role !== "owner") return reply.code(403).send({ error: "forbidden" });
+    if (!d.gmail) return reply.code(404).send({ error: "not_configured" });
+    await d.gmail.disconnect();
+    req.log.info({ by: c.sub }, "Gmail disconnected from the admin panel");
+    return d.gmail.status();
+  });
+
+  app.post("/api/admin/gmail/test", limit, async (req, reply) => {
+    const c = await verify(req, reply);
+    if (!c) return;
+    if (c.role === "viewer") return reply.code(403).send({ error: "forbidden" });
+    if (!d.gmail) return reply.code(404).send({ error: "not_configured" });
+    if (!(await d.gmail.ready())) return reply.code(409).send({ error: "not_connected", message: "Gmail is not connected" });
+    try {
+      await d.gmail.send({
+        to: c.sub, subject: "בדיקת שליחה משרת התשלומים (PayPal) / Kabala billing test email",
+        text: "המייל הזה נשלח דרך Gmail API משרת ה-PayPal. אם הוא הגיע, השליחה עובדת.\n\nThis email was sent through the Gmail API from the PayPal billing server.\n",
+        html: '<p dir="rtl">המייל הזה נשלח דרך Gmail API משרת ה-PayPal. אם הוא הגיע, השליחה עובדת.</p><p>This email was sent through the Gmail API from the PayPal billing server.</p>',
+      });
+    } catch (e) {
+      return reply.code(409).send({ error: "send_failed", message: (e as Error).message.slice(0, 300) });
+    }
     return { ok: true, to: c.sub };
   });
 }

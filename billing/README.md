@@ -165,12 +165,15 @@ verified PAYMENT.SALE.COMPLETED ─▶ receipt (pending, running number) ─▶ 
 
 All email (receipts, license keys, admin alerts) goes through the **Gmail API**, from one Gmail or Google Workspace account. There is no SMTP and no other provider.
 
+**From the admin panel (recommended):** when an owner connects Gmail on the panel's **Gmail** page (`../server`), the panel sends the same account here over the signed admin API (`POST /api/admin/gmail`, owner only, a single-use token bound to the request body). This server stores the client secret and refresh token encrypted (AES-256-GCM) in `gmail_account` (`src/email/gmail-account.ts`). Switching or disconnecting the account in the panel applies here too. The panel's Gmail page shows this server's account, and can resend it or send a test email from here.
+
+**Without the panel:** `npm run gmail:authorize [-- you@gmail.com]`.
 1. In Google Cloud Console, enable the **Gmail API** and publish the OAuth consent screen ("In production"). While it is in "Testing", Google expires the token after 7 days.
-2. Run `npm run gmail:authorize [-- you@gmail.com]`. It opens Google's consent page for the `gmail.send` scope only (it can't read, change or delete mail), and writes `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` and `MAIL_FROM` into `.env`. It uses the desktop app's OAuth client (`../google_client.json`).
-3. Put the same values on the server. The Stripe server (`../server`) reads the same variables, or connects its account from the admin panel's Gmail page.
+2. The command opens Google's consent page for the `gmail.send` scope only (it can't read, change or delete mail), and writes `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` and `MAIL_FROM` into `.env`. It uses the desktop app's OAuth client (`../google_client.json`).
+3. An account connected from the panel takes precedence over these.
 
 - **Limits:** Gmail's limits apply: about 500 recipients a day on a personal account, 2,000 on Google Workspace.
-- **Without these variables:** emails are only logged, in development. In production the server refuses to start, so receipts are never marked "sent" when nobody received them.
+- **Nothing connected:** in development emails are only logged. In production sending fails (and is retried) until an account is connected, so a receipt is never marked "sent" when nobody received it.
 - **Delivery:** Google signs the messages (SPF/DKIM of gmail.com, or of your Workspace domain), so they reach the inbox.
 
 ### Local testing

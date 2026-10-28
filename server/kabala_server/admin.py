@@ -251,6 +251,32 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
                 f'<p><a href="/admin#gmail">חזרה לפאנל הניהול</a></p></body></html>')
         return HTMLResponse(body, status_code=200 if ok else 400)
 
+    paypal_sync: dict = {"ok": None, "error": None, "at": None}  # the last time the account was sent to billing
+
+    def sync_paypal(actor: str) -> None:
+        """The PayPal billing server sends as the same Gmail account: give it the account (or tell it to forget it)."""
+        if not billing or not gmail:
+            return
+        creds = gmail.credentials()
+        try:
+            if creds:
+                billing.post("/api/admin/gmail", actor, "owner", creds)
+            else:
+                billing.post("/api/admin/gmail/disconnect", actor, "owner")
+            paypal_sync.update(ok=True, error=None, at=int(time.time()))
+        except (BillingUnavailable, BillingRefused, BillingNotFound) as e:
+            paypal_sync.update(ok=False, error=f"{type(e).__name__}: {e}"[:200], at=int(time.time()))
+
+    def paypal_gmail(admin: dict) -> dict | None:
+        if not billing:
+            return None
+        try:
+            st = billing.get("/api/admin/gmail", admin["email"], admin["role"])
+        except (BillingUnavailable, BillingRefused, BillingNotFound) as e:
+            return {"reachable": False, "error": str(e)[:200], "sync": paypal_sync}
+        mine = gmail.status()["email"] if gmail else None
+        return {"reachable": True, **st, "sameAccount": bool(st.get("connected") and st.get("email") == mine), "sync": paypal_sync}
+
     @app.get("/admin/api/mail-status")
     @limiter.limit("30/minute")
     def mail_status(request: Request) -> dict:
@@ -261,7 +287,7 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
     def gmail_status(request: Request, admin: dict = Depends(viewer)) -> dict:
         if not gmail:
             raise HTTPException(503, "Gmail is not available")
-        return {**gmail.status(), "redirectUri": redirect_uri(request)}
+        return {**gmail.status(), "redirectUri": redirect_uri(request), "paypal": paypal_gmail(admin)}
 
     @app.post("/admin/api/gmail/connect")
     def gmail_connect(request: Request, admin: dict = Depends(owner)) -> dict:
@@ -278,6 +304,11 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
         if gmail.ready:
             raise HTTPException(409, "Gmail is already connected; sign in with a code")
         return {"url": gmail.start(redirect_uri(request), None)}
+
+    def paypal_note() -> str:
+        if not billing:
+            return ""
+        return " (גם משרת ה-PayPal)" if paypal_sync["ok"] else " (שרת ה-PayPal לא עודכן: אפשר לנסות שוב מדף Gmail)"
 
     @app.get("/admin/api/gmail/callback", name="gmail_callback")
     @limiter.limit("20/minute")
@@ -298,7 +329,8 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
                 return gmail_page("אין הרשאה", "רק בעלים יכולים לחבר את Gmail.")
             gmail.connect(address, token, started_by)
             db.audit(started_by, "gmail_connect", address, ip_of(request))
-            return gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}.", ok=True)
+            sync_paypal(started_by)
+            return gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}{paypal_note()}.", ok=True)
         # first connection from the sign-in page: Google proved who this is; they must be an owner
         if gmail.ready or db.admin_role(address) != "owner":
             gmail._revoke(token)
@@ -306,7 +338,8 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
                                            "(KABALA_OWNER_EMAILS), או היכנס עם קוד וחבר מדף Gmail.")
         gmail.connect(address, token, address)
         db.audit(address, "gmail_connect", address, ip_of(request))
-        response = gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}, ונכנסת לפאנל.", ok=True)
+        sync_paypal(address)
+        response = gmail_page("Gmail חובר", f"המיילים יישלחו מ-{address}{paypal_note()}, ונכנסת לפאנל.", ok=True)
         sign_in(request, response, address, "login_google")
         return response
 
@@ -317,7 +350,32 @@ def install(app: FastAPI, db: Database, config: Config, mailer: email_login.Mail
         before = gmail.status()["email"]
         gmail.disconnect()
         db.audit(admin["email"], "gmail_disconnect", before, admin["ip"])
+        sync_paypal(admin["email"])
         return gmail.status()
+
+    @app.post("/admin/api/gmail/sync-paypal")
+    def gmail_sync_paypal(admin: dict = Depends(owner)) -> dict:
+        if not billing:
+            raise HTTPException(404, "the PayPal server is not connected to the panel")
+        sync_paypal(admin["email"])
+        db.audit(admin["email"], "gmail_sync_paypal", gmail.status()["email"] if gmail else None, admin["ip"])
+        if not paypal_sync["ok"]:
+            raise HTTPException(502, paypal_sync["error"] or "failed")
+        return {"ok": True, "paypal": paypal_gmail(admin)}
+
+    @app.post("/admin/api/gmail/test-paypal")
+    @limiter.limit("5/minute")
+    def gmail_test_paypal(request: Request, admin: dict = Depends(admin_)) -> dict:
+        if not billing:
+            raise HTTPException(404, "the PayPal server is not connected to the panel")
+        try:
+            r = billing.post("/api/admin/gmail/test", admin["email"], admin["role"])
+        except BillingRefused as e:
+            raise HTTPException(409, str(e)) from e
+        except (BillingUnavailable, BillingNotFound) as e:
+            raise HTTPException(502, "the PayPal server is unreachable") from e
+        db.audit(admin["email"], "gmail_test_paypal", admin["email"], admin["ip"])
+        return r
 
     @app.post("/admin/api/gmail/test")
     @limiter.limit("5/minute")

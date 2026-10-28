@@ -226,6 +226,20 @@ export const receiptSettings = pgTable("receipt_settings", {
   updatedBy: text("updated_by"),
 });
 
+/**
+ * The Gmail account all email is sent from (src/email/gmail-account.ts), connected from the admin panel: one row
+ * (id = 1). The OAuth client secret and refresh token are stored only encrypted (AES-256-GCM).
+ */
+export const gmailAccount = pgTable("gmail_account", {
+  id: integer("id").primaryKey().default(1),
+  email: text("email").notNull(),
+  clientId: text("client_id").notNull(),
+  /** {"clientSecret","refreshToken"} encrypted */
+  secretsEncrypted: text("secrets_encrypted").notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+  connectedBy: text("connected_by").notNull(),
+});
+
 /** @deprecated replaced by `receipts`. Kept so older databases still migrate; nothing new is written to it. */
 export const invoices = pgTable("invoices", {
   id: uuid("id").primaryKey().defaultRandom(),

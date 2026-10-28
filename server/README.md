@@ -147,8 +147,9 @@ Every email the server sends goes through the Gmail API (`kabala_server/gmail_ap
 2. Set `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` on the server, and restart it.
 3. Open `/admin`. While no account is connected, nobody can get a sign-in code, so the sign-in page shows **"חבר Gmail והיכנס"**. Sign in with an owner's Google account (`KABALA_OWNER_EMAILS`) and approve. This connects Gmail and signs you in.
 4. Later, on the panel's **Gmail** page, an owner can connect another account (for example `billing@your-business.com`), send a test email, or disconnect. Every change is written to the audit log, and a replaced token is revoked at Google.
+5. **The PayPal billing server sends as the same account.** With `KABALA_BILLING_URL` set, every connect, switch and disconnect is sent there too, over the signed admin API (owner role). The Gmail page shows the PayPal server's account, with **Sync to the PayPal server** if it differs (for example, it was down) and a test email from there.
 
-- **Without the panel:** set `GMAIL_REFRESH_TOKEN` instead, from `python -m kabala_server.gmail_api authorize`. That command uses a Desktop app client, or the desktop app's `google_client.json`. The PayPal billing server reads the same variables (`npm run gmail:authorize`), so one token can serve both.
+- **Without the panel:** set `GMAIL_REFRESH_TOKEN` instead, from `python -m kabala_server.gmail_api authorize`. That command uses a Desktop app client, or the desktop app's `google_client.json`. The PayPal billing server can use the same variables (`npm run gmail:authorize`).
 - **Limits:** Gmail's daily limit applies: about 500 recipients a day for a regular account, 2,000 for Google Workspace.
 - **Failures:** failed sends are retried by the receipt worker as usual. The last error from Google shows on the Gmail page and in the receipts.
 

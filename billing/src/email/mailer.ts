@@ -1,10 +1,8 @@
 /**
- * Outgoing email goes only through the Gmail API (see mailerFromEnv):
- *   GMAIL_REFRESH_TOKEN → GmailApiMailer (OAuth, send-only scope, no password; `npm run gmail:authorize`)
- *   not set             → ConsoleMailer (development only: logs recipient and subject, never payment details;
- *                         refused in production, see context.ts)
+ * Outgoing email goes only through the Gmail API: GmailAccount (gmail-account.ts) sends as the account connected
+ * in the admin panel, or GMAIL_* from `npm run gmail:authorize`. ConsoleMailer is for development and tests only
+ * (logs recipient and subject, never payment details).
  */
-import { GmailApiMailer } from "./gmail-api.js";
 
 export interface Mail {
   to: string;
@@ -30,19 +28,6 @@ export class ConsoleMailer implements Mailer {
     console.info(`[mail] to=${mail.to}${mail.cc?.length ? ` cc=${mail.cc.length}` : ""} subject="${mail.subject}" attachments=${mail.attachments?.length ?? 0}`);
     return { id: `console-${this.sent.length}` };
   }
-}
-
-export function mailerFromEnv(env: {
-  MAIL_FROM: string;
-  MAIL_REPLY_TO?: string;
-  GMAIL_CLIENT_ID?: string;
-  GMAIL_CLIENT_SECRET?: string;
-  GMAIL_REFRESH_TOKEN?: string;
-}): Mailer {
-  if (env.GMAIL_REFRESH_TOKEN && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET) {
-    return new GmailApiMailer({ clientId: env.GMAIL_CLIENT_ID, clientSecret: env.GMAIL_CLIENT_SECRET, refreshToken: env.GMAIL_REFRESH_TOKEN, from: env.MAIL_FROM, replyTo: env.MAIL_REPLY_TO });
-  }
-  return new ConsoleMailer();
 }
 
 export function adminAlertMail(to: string, subject: string, details: string): Mail {

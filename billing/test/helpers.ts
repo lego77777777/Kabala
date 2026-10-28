@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { GmailAccount } from "../src/email/gmail-account.js";
 import { buildApp } from "../src/app.js";
 import { openDatabase } from "../src/db/client.js";
 import { ConsoleMailer, type Mailer } from "../src/email/mailer.js";
@@ -20,7 +21,7 @@ import { FakePayPal, VALID_HEADERS } from "./fakes.js";
 
 export const SELLER: Seller = { name: "Kabala", taxId: "123456789", address: "תל אביב", email: "billing@kabala.test", businessType: "exempt" };
 
-export async function setup(opts: { sync?: boolean; paypalClientId?: string; provider?: ReceiptProvider; mailer?: Mailer; businessType?: BusinessType; adminPublicKeyPem?: string } = {}) {
+export async function setup(opts: { sync?: boolean; paypalClientId?: string; provider?: ReceiptProvider; mailer?: Mailer; businessType?: BusinessType; adminPublicKeyPem?: string; gmailFetch?: typeof fetch } = {}) {
   const database = openDatabase("pglite:memory");
   await database.migrate();
   const paypal = new FakePayPal();
@@ -52,6 +53,8 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
   const keys = new LicenseKeyService({ db: database.db, secret: "test-license-key-secret-0123456789abcdef", now: () => clock });
   const billing = new BillingService({ db: database.db, paypal, tokens, receipts: pipeline, mailer, licenseTtlDays: 7, keys, now: () => clock });
   if (opts.sync !== false) await syncPricing(database.db, paypal);
+  // the Gmail account the panel connects (src/email/gmail-account.ts), with Google faked by gmailFetch
+  const gmail = new GmailAccount({ db: database.db, secret: "test-gmail-secret-0123456789abcdef0123", env: { MAIL_FROM: "Kabala" }, fetchImpl: opts.gmailFetch, now: () => clock });
   const app = await buildApp({
     billing,
     tokens,
@@ -66,7 +69,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     logger: false,
     receipts: { storage, links, resend: (id, uid) => pipeline.resend(id, uid) },
     keys,
-    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys, receipts: { pipeline, storage, settings: receiptSettings } } : undefined,
+    admin: opts.adminPublicKeyPem ? { db: database.db, publicKeyPem: opts.adminPublicKeyPem, keys, receipts: { pipeline, storage, settings: receiptSettings }, gmail } : undefined,
   });
 
   async function login(email = "dana@gmail.com") {
@@ -85,7 +88,7 @@ export async function setup(opts: { sync?: boolean; paypalClientId?: string; pro
     });
   }
 
-  return {
+  return { gmail,
     database,
     db: database.db,
     paypal,

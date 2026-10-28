@@ -24,6 +24,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { registerAdminApi } from "./admin/admin-api.js";
+import type { GmailAccount } from "./email/gmail-account.js";
 import type { Currency } from "./config/pricing.config.js";
 import type { Db } from "./db/client.js";
 import { isMailbox } from "./email/address.js";
@@ -52,7 +53,7 @@ export interface AppDeps {
   /** receipt PDFs and the "send again" action (src/receipts/pipeline.ts) */
   receipts?: { storage: Storage; links: LinkSigner; resend(receiptId: string, userId: string): Promise<boolean> };
   /** read-only API for the admin panel (src/admin/admin-api.ts); off without ADMIN_PANEL_PUBLIC_KEY */
-  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService; receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry" | "sendTest" | "preview">; storage: Storage; settings?: ReceiptSettingsService } };
+  admin?: { db: Db; publicKeyPem: string; keys?: LicenseKeyService; receipts?: { pipeline: Pick<ReceiptPipeline, "adminSend" | "retry" | "sendTest" | "preview">; storage: Storage; settings?: ReceiptSettingsService }; gmail?: GmailAccount };
   /** license keys: activation in the desktop app, "new key" on the account page */
   keys?: LicenseKeyService;
 }

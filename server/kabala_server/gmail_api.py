@@ -136,6 +136,14 @@ class Gmail:
             return self.config.gmail_refresh_token, address if "@" in address else "", "env"
         return None
 
+    def credentials(self) -> dict | None:
+        """What the PayPal billing server needs to send as the same account (pushed over the signed admin API)."""
+        token = self._token()
+        if not token or not token[1]:
+            return None
+        return {"email": token[1], "clientId": self.config.gmail_client_id, "clientSecret": self.config.gmail_client_secret,
+                "refreshToken": token[0]}
+
     @property
     def ready(self) -> bool:
         return self._token() is not None

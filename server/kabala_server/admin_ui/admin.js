@@ -10,6 +10,7 @@ const ACTION_NAME = {
   receipt_sent: "שלח קבלה במייל", receipt_retry: "ניסה שוב קבלה", receipt_downloaded: "הוריד קבלה",
   receipt_settings: "שינה הגדרות שליחה", receipt_test: "שלח מייל בדיקה",
   gmail_connect: "חיבר Gmail", gmail_disconnect: "ניתק Gmail", gmail_test: "שלח מייל בדיקה מ-Gmail", login_google: "כניסה עם Google",
+  gmail_sync_paypal: "סנכרן Gmail לשרת PayPal", gmail_test_paypal: "מייל בדיקה משרת PayPal",
   "admin_set:viewer": "הגדיר צופה", "admin_set:admin": "הגדיר מנהל", "admin_set:owner": "הגדיר בעלים",
 };
 const ROUTES = {
@@ -717,7 +718,7 @@ async function gmailView(view) {
   connect.onclick = busy(connect, async () => { location.href = (await api("/admin/api/gmail/connect", { method: "POST" })).url; });
   const disconnect = h("button", { class: "btn ghost" }, "נתק");
   disconnect.onclick = busy(disconnect, async () => {
-    if (!confirm(`לנתק את ${d.email}? עד שיחובר חשבון אחר לא יישלחו מיילים: לא קודי כניסה ולא קבלות.`)) return;
+    if (!confirm(`לנתק את ${d.email}? עד שיחובר חשבון אחר לא יישלחו מיילים: לא קודי כניסה ולא קבלות${d.paypal ? ", גם לא משרת ה-PayPal" : ""}.`)) return;
     await api("/admin/api/gmail/disconnect", { method: "POST" });
     toast("Gmail נותק");
     route();
@@ -726,9 +727,30 @@ async function gmailView(view) {
   test.onclick = busy(test, async () => { const r = await api("/admin/api/gmail/test", { method: "POST" }); toast(`נשלח אל ${r.to}`); route(); });
   const copy = h("button", { class: "btn sm ghost", onclick: async () => { await navigator.clipboard?.writeText(d.redirectUri); toast("הועתק"); } }, "העתק");
   const row = (label, value) => h("div", { class: "kv" }, h("span", { class: "muted" }, label), value);
+  // the PayPal billing server sends as the same account: the panel hands it over on every connect/disconnect
+  const pp = d.paypal;
+  const sync = h("button", { class: "btn" }, "סנכרן לשרת PayPal");
+  sync.onclick = busy(sync, async () => { await api("/admin/api/gmail/sync-paypal", { method: "POST" }); toast("שרת ה-PayPal עודכן"); route(); });
+  const testPaypal = h("button", { class: "btn" }, "מייל בדיקה משרת PayPal");
+  testPaypal.onclick = busy(testPaypal, async () => { const r = await api("/admin/api/gmail/test-paypal", { method: "POST" }); toast(`נשלח משרת ה-PayPal אל ${r.to}`); route(); });
+  const paypalCard = !pp ? null : h("div", { class: "card" },
+    h("h3", {}, "שרת ה-PayPal"),
+    !pp.reachable
+      ? h("div", { class: "error" }, `שרת ה-PayPal לא זמין: ${pp.error}`)
+      : h("div", {},
+        pp.connected
+          ? h("div", {}, h("div", { class: "value ltr", dir: "ltr" }, pp.email || "—"),
+            h("span", { class: `pill ${pp.sameAccount ? "active" : "past_due"}` }, pp.sameAccount ? "שולח מאותו חשבון" : "חשבון אחר מהפאנל"))
+          : h("span", { class: "pill canceled" }, "לא מחובר: קבלות PayPal לא נשלחות"),
+        pp.connected ? row("מקור", pp.source === "env" ? "משתנה סביבה (npm run gmail:authorize)" : "מהפאנל") : null,
+        pp.lastSentAt ? row("שליחה אחרונה", dateTime(pp.lastSentAt)) : null,
+        pp.lastError ? h("div", { class: "error" }, `שגיאה אחרונה: ${pp.lastError}`) : null),
+    pp.sync?.ok === false ? h("div", { class: "error" }, `העדכון האחרון של שרת ה-PayPal נכשל: ${pp.sync.error}`) : null,
+    h("div", { class: "toolbar" }, can("owner") && pp.reachable && d.connected && !pp.sameAccount ? sync : null,
+      can("admin") && pp.reachable && pp.connected ? testPaypal : null));
   const source = d.source === "env" ? "משתנה סביבה (GMAIL_REFRESH_TOKEN)" : "חובר מהפאנל";
   view.replaceChildren(
-    h("p", { class: "note" }, "כל המיילים של השרת נשלחים דרך Gmail API מהחשבון שמחובר כאן: קודי כניסה, קבלות ללקוחות עם ה-PDF, ומיילי התראה. ההרשאה היא לשליחה בלבד: השרת לא יכול לקרוא את תיבת הדואר."),
+    h("p", { class: "note" }, `כל המיילים נשלחים דרך Gmail API מהחשבון שמחובר כאן: קודי כניסה, קבלות ללקוחות עם ה-PDF, ומיילי התראה${pp ? ", גם בשרת ה-PayPal (החשבון מועבר אליו אוטומטית בכל חיבור)" : ""}. ההרשאה היא לשליחה בלבד: אי אפשר לקרוא את תיבת הדואר.`),
     h("div", { class: "cards" },
       h("div", { class: "card" },
         h("h3", {}, "החשבון השולח"),
@@ -745,7 +767,8 @@ async function gmailView(view) {
           ? h("p", { class: "muted" }, "לקוח OAuth מוגדר בשרת. בלקוח (מסוג Web application) צריך להופיע ה-Redirect URI הזה:")
           : h("div", { class: "error" }, "חסרים בשרת GMAIL_CLIENT_ID ו-GMAIL_CLIENT_SECRET. צור לקוח OAuth מסוג Web application, הוסף לו את ה-Redirect URI הזה, הגדר את שני המשתנים והפעל את השרת מחדש."),
         h("div", { class: "toolbar" }, h("code", { dir: "ltr", class: "ltr" }, d.redirectUri), copy),
-        h("p", { class: "muted" }, "וגם: להפעיל את Gmail API בפרויקט, ולפרסם את מסך ההסכמה (In production), אחרת Google מבטל את החיבור אחרי 7 ימים."))),
+        h("p", { class: "muted" }, "וגם: להפעיל את Gmail API בפרויקט, ולפרסם את מסך ההסכמה (In production), אחרת Google מבטל את החיבור אחרי 7 ימים.")),
+      paypalCard),
     can("owner")
       ? h("div", { class: "toolbar" }, d.clientConfigured ? connect : null, d.connected && d.source === "panel" ? disconnect : null,
         d.connected && can("admin") ? test : null)
